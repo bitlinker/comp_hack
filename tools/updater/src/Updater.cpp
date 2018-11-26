@@ -43,17 +43,7 @@
 
 Updater::Updater(QWidget *p) : QWidget(p), mDone(false)
 {
-    QString settingsPath = "ImagineUpdate.dat";
-
-    if(QFileInfo("ImagineUpdate-user.dat").exists())
-    {
-        settingsPath = "ImagineUpdate-user.dat";
-    }
-
-    QSettings settings(settingsPath, QSettings::IniFormat);
-
-    mURL = settings.value("Setting/BaseURL1").toString();
-    mWebsite = settings.value("Setting/Information").toString();
+    reloadSettings();
 
     ui.setupUi(this);
     ui.playButton->setEnabled(false);
@@ -67,7 +57,40 @@ Updater::Updater(QWidget *p) : QWidget(p), mDone(false)
 
     setFixedSize(sizeHint());
 
+    connect(ui.settingsButton, SIGNAL(clicked(bool)),
+        this, SLOT(showSettings()));
+    connect(ui.screenshotsButton, SIGNAL(clicked(bool)),
+        this, SLOT(showScreenshots()));
+    connect(ui.diagButton, SIGNAL(clicked(bool)),
+        this, SLOT(showDXDiag()));
+    connect(ui.checkButton, SIGNAL(clicked(bool)),
+        this, SLOT(recheck()));
+
+    restartDownloader();
+}
+
+void Updater::reloadSettings()
+{
+    QString settingsPath = "ImagineUpdate.dat";
+
+    if (QFileInfo("ImagineUpdate-user.dat").exists())
+    {
+        settingsPath = "ImagineUpdate-user.dat";
+    }
+    QSettings settings(settingsPath, QSettings::IniFormat);
+
+    mURL = settings.value("Setting/BaseURL1").toString();
+    mWebsite = settings.value("Setting/Information").toString();
+    mDisableBlacklists = settings.value("Custom/DisableBlacklists", QVariant(false)).toBool();
+}
+
+void Updater::restartDownloader()
+{
     mDL = new Downloader(mURL);
+    if (!mDisableBlacklists)
+    {
+        mDL->loadBlacklists(QDir());
+    }
     mDL->moveToThread(&mDownloadThread);
 
     connect(&mDownloadThread, SIGNAL(started()), mDL, SLOT(startUpdate()));
@@ -86,15 +109,6 @@ Updater::Updater(QWidget *p) : QWidget(p), mDone(false)
         ui.fileProgress, SLOT(setValue(int)));
     connect(mDL, SIGNAL(errorMessage(const QString&)),
         this, SLOT(errorMessage(const QString&)));
-
-    connect(ui.settingsButton, SIGNAL(clicked(bool)),
-        this, SLOT(showSettings()));
-    connect(ui.screenshotsButton, SIGNAL(clicked(bool)),
-        this, SLOT(showScreenshots()));
-    connect(ui.diagButton, SIGNAL(clicked(bool)),
-        this, SLOT(showDXDiag()));
-    connect(ui.checkButton, SIGNAL(clicked(bool)),
-        this, SLOT(recheck()));
 
     mDownloadThread.start();
 }
@@ -474,6 +488,8 @@ void Updater::showDXDiag()
 
 void Updater::recheck()
 {
+    reloadSettings();
+
     mDone = false;
 
     bool block = mDL->blockSignals(true);
@@ -505,27 +521,7 @@ void Updater::recheck()
 
     ui.statusLabel->setText("Please wait...");
 
-    mDL = new Downloader(mURL);
-    mDL->moveToThread(&mDownloadThread);
-
-    connect(&mDownloadThread, SIGNAL(started()), mDL, SLOT(startUpdate()));
-    connect(mDL, SIGNAL(updateFinished()), &mDownloadThread, SLOT(quit()));
-    connect(mDL, SIGNAL(updateKilled()), &mDownloadThread, SLOT(quit()));
-    connect(mDL, SIGNAL(updateFinished()), this, SLOT(unlock()));
-    connect(mDL, SIGNAL(statusChanged(const QString&)),
-        ui.statusLabel, SLOT(setText(const QString&)));
-    connect(mDL, SIGNAL(totalFilesChanged(int)),
-        ui.totalProgress, SLOT(setMaximum(int)));
-    connect(mDL, SIGNAL(currentFileChanged(int)),
-        ui.totalProgress, SLOT(setValue(int)));
-    connect(mDL, SIGNAL(downloadSizeChanged(int)),
-        ui.fileProgress, SLOT(setMaximum(int)));
-    connect(mDL, SIGNAL(downloadProgressChanged(int)),
-        ui.fileProgress, SLOT(setValue(int)));
-    connect(mDL, SIGNAL(errorMessage(const QString&)),
-        this, SLOT(errorMessage(const QString&)));
-
-    mDownloadThread.start();
+    restartDownloader();
 }
 
 void Updater::errorMessage(const QString& msg)

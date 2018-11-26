@@ -141,6 +141,25 @@ Downloader::Downloader(const QString& url, QObject *p) : QObject(p),
     }
 }
 
+void Downloader::loadBlacklists(const QDir& curDir)
+{    
+    QStringList blacklistFiles = curDir.entryList(QStringList() << "*.updater_blacklist", QDir::Files);
+    foreach(QString blacklistFileName, blacklistFiles) {
+        QFile blacklistFile(blacklistFileName);
+        blacklistFile.open(QIODevice::ReadOnly);
+        parseAddBlacklist(blacklistFile.readAll());
+    }
+}
+
+void Downloader::parseAddBlacklist(const QByteArray& d)
+{
+    QStringList lines = QString::fromUtf8(d).split("\n");
+    foreach(QString line, lines)
+    {        
+        mBlackList.insert(line.toLower());
+    }
+}
+
 Downloader::~Downloader()
 {
     delete mFileHash;
@@ -526,6 +545,12 @@ void Downloader::advanceToNextFile()
 
         FileData *info = mFiles.takeFirst();
 
+        QString filename = info->path;
+        filename = filename.replace("/", "\\");
+        if (filename.right(11) == ".compressed")
+            filename = filename.left(filename.length() - 11);
+
+        // Whitelist
         if( !mWhiteList.isEmpty() )
         {
             bool good = false;
@@ -540,6 +565,12 @@ void Downloader::advanceToNextFile()
 
             if(!good)
                 continue;
+        }
+
+        // Blacklist
+        if (mBlackList.contains(filename.toLower()))
+        {
+            continue;
         }
 
         if( mOldFiles.contains(info->path) )
@@ -572,11 +603,6 @@ void Downloader::advanceToNextFile()
                         info->uncompressed_size).toUtf8() );
                 }
 
-                QString filename = info->path;
-                filename = filename.replace("/", "\\");
-                if(filename.right(11) == ".compressed")
-                    filename = filename.left(filename.length() - 11);
-
                 emit currentFileChanged(mTotalFiles - mFiles.count());
                 emit statusChanged(filename);
                 emit downloadSizeChanged(info->compressed_size);
@@ -590,11 +616,6 @@ void Downloader::advanceToNextFile()
 
         delete mCurrentFile;
         mCurrentFile = info;
-
-        QString filename = info->path;
-        filename = filename.replace("/", "\\");
-        if(filename.right(11) == ".compressed")
-            filename = filename.left(filename.length() - 11);
 
         emit currentFileChanged(mTotalFiles - mFiles.count());
         emit statusChanged(filename);

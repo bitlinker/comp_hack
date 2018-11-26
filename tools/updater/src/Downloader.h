@@ -33,6 +33,8 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QSet>
+#include <QDir>
 #include <QCryptographicHash>
 #include <PopIgnore.h>
 
@@ -59,6 +61,7 @@ public:
     ~Downloader();
 
     void triggerKill();
+    void loadBlacklists(const QDir& curDir);
 
 signals:
     void updateKilled();
@@ -92,6 +95,8 @@ protected:
     int uncompressChunk(const void *src, void *dest,
         int in_size, int chunk_size) const;
     QMap<QString, FileData*> parseFileList(const QByteArray& d);
+    void parseAddAllBlacklists();
+    void parseAddBlacklist(const QByteArray& d);
     bool checkFile(const FileData *info);
 
     int mStatusCode;
@@ -114,6 +119,7 @@ protected:
     bool mSaveFiles;
     bool mUseClassic;
     QStringList mWhiteList;
+    QSet<QString> mBlackList;
 
     QNetworkAccessManager *mConnection;
     FileData *mCurrentFile;

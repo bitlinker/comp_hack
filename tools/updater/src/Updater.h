@@ -68,11 +68,14 @@ protected:
     virtual void closeEvent(QCloseEvent *event);
 
     bool copyFile(const QString& src, const QString& dest);
+    void restartDownloader();
+    void reloadSettings();
 
     bool mDone;
 
     QString mURL;
     QString mWebsite;
+    bool mDisableBlacklists;
 
     Downloader *mDL;
     QThread mDownloadThread;
