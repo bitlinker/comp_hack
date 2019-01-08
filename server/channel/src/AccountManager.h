@@ -38,6 +38,8 @@ class Database;
 namespace objects
 {
 class Account;
+class ChannelLogin;
+class CharacterLogin;
 }
 
 namespace channel
@@ -118,6 +120,30 @@ public:
         bool delay = false);
 
     /**
+     * Request that a client disconnect from the server. Typically used
+     * following an initial logout request from the client.
+     * @param client Pointer to the client connection
+     */
+    void RequestDisconnect(const std::shared_ptr<
+        channel::ChannelClientConnection>& client);
+
+    /**
+     * Create a channel change ChannelLogin for the supplied client and save
+     * all logout information now. The world communication must be handled
+     * elsewhere.
+     * @param client Pointer to the client connection
+     * @param zoneID ID of the zone the player will enter on the other channel.
+     *  If 0 the current character state will be used.
+     * @param dynamicMapID Dynamic map ID of the zone the player will enter on
+     *  the other channel. If 0 the current character state will be used.
+     * @param channelID ID of the channel being moved to
+     * @return Pointer to the channel change ChannelLogin
+     */
+    std::shared_ptr<objects::ChannelLogin> PrepareChannelChange(
+        const std::shared_ptr<channel::ChannelClientConnection>& client,
+        uint32_t zoneID, uint32_t dynamicMapID, uint8_t channelID);
+
+    /**
      * Authenticate an account by its connection.
      * @param client Pointer to the client connection
      */
@@ -141,7 +167,48 @@ public:
     void SendCPBalance(const std::shared_ptr<
         channel::ChannelClientConnection>& client);
 
+    /**
+     * Get all active CharacterLogins associated to the world
+     * @return Map of active CharacterLogins by world CID
+     */
+    std::unordered_map<int32_t,
+        std::shared_ptr<objects::CharacterLogin>> GetActiveLogins();
+
+    /**
+     * Get an active CharacterLogin by world CID
+     * @param characterUID Character UUID to retrieve
+     * @return Pointer to the active CharacterLogin or null if no matching
+     *  UID is active
+     */
+    std::shared_ptr<objects::CharacterLogin> GetActiveLogin(
+        const libobjgen::UUID& characterUID);
+
+    /**
+     * Update all registered CharacterLogins on the server
+     * @param update List of updated CharacterLogins
+     * @param removes List of removed CharacterLogins
+     */
+    void UpdateLogins(
+        std::list<std::shared_ptr<objects::CharacterLogin>> updates,
+        std::list<std::shared_ptr<objects::CharacterLogin>> removes);
+
+    /**
+     * Dump the account and return it. This account data can then be
+     * imported into another server.
+     * @param state ClientState object for the account to dump.
+     * @returns Dump of the account or an empty string on error.
+     */
+    libcomp::String DumpAccount(channel::ClientState *state);
+
 private:
+    /**
+     * Delete a <member> from an object in the XML DOM.
+     * @param pElement Object element to delete the <member> from.
+     * @param field Name of the member field to delete.
+     */
+    void WipeMember(tinyxml2::XMLElement *pElement,
+        const std::string& field);
+
     /**
      * Create/load character data for use upon logging in.
      * @param character Character to initialize
@@ -178,6 +245,16 @@ private:
      * @return true on success, false on failure
      */
     bool LogoutCharacter(channel::ClientState* state);
+
+    /// Map of all character logins active on the world by world CID
+    std::unordered_map<int32_t,
+        std::shared_ptr<objects::CharacterLogin>> mActiveLogins;
+
+    /// Map of character UUIDs to world CID for any active login
+    std::unordered_map<libcomp::String, int32_t> mCIDMap;
+
+    /// Server lock for shared resources
+    std::mutex mLock;
 
     /// Pointer to the channel server
     std::weak_ptr<ChannelServer> mServer;

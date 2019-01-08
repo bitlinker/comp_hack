@@ -40,7 +40,10 @@ class DefinitionManager;
 
 namespace objects
 {
+class DigitalizeState;
+class EventCounter;
 class Item;
+class MiGuardianAssistData;
 class MiSpecialConditionData;
 }
 
@@ -97,12 +100,49 @@ public:
     std::list<int32_t> GetQuestBonusTokuseiIDs() const;
 
     /**
+     * Get the current digitalization state of the character. This state
+     * is calculated when digitalization starts so anything that affects
+     * the calculations that occur at that time will not reflect until
+     * digitalzation occurs again.
+     * @return Pointer to the current digitalzation state of the character
+     */
+    std::shared_ptr<objects::DigitalizeState> GetDigitalizeState() const;
+
+    /**
+     * Begin digitalization between the character and the supplied demon
+     * @param demon Pointer to the demon to digitalize with
+     * @param definitionManager Pointer to the definition manager to use
+     *  for determining digitalization information
+     * @return Pointer to the new digitalization state, null if digitalization
+     *  was ended
+     */
+    std::shared_ptr<objects::DigitalizeState> Digitalize(
+        const std::shared_ptr<objects::Demon>& demon,
+        libcomp::DefinitionManager* definitionManager);
+
+    /**
+     * Get the current valuable based ability level of the character to
+     * use digitalization from 0 (cannot use) to 2 (can use all types)
+     * @return Numeric digitalization ability level
+     */
+    uint8_t GetDigitalizeAbilityLevel();
+
+    /**
      * Determine the tokusei effects gained for the character based upon
      * their current equipment
      * @param definitionManager Pointer to the definition manager to use
      *  for determining equipment effects
      */
     void RecalcEquipState(libcomp::DefinitionManager* definitionManager);
+
+    /**
+     * Determine if any equipment on the character is set to expire but has
+     * not yet since the last time it was checked. If this returns true,
+     * RecalcEquipState should be called again.
+     * @param now Current system time
+     * @return true if equipment has expired, false if it has not
+     */
+    bool EquipmentExpired(uint32_t now);
 
     /**
      * Determine the quest bonus effects gained for the character based
@@ -123,13 +163,14 @@ public:
     /**
      * Determine the character's current expertise rank for the
      * specified ID. This includes chain expertise calculations.
-     * @param definitionManager Pointer to the definition manager to use
-     *  for determining chain expertise relationships
      * @param expertiseID ID of the expertise to calculate
+     * @param definitionManager Pointer to the definition manager to use
+     *  for determining chain expertise relationships. If null, the expertise
+     *  will be retrieved as a non-chain expertise.
      * @return Rank of the supplied expertise ID
      */
-    uint8_t GetExpertiseRank(libcomp::DefinitionManager* definitionManager,
-        uint32_t expertiseID);
+    uint8_t GetExpertiseRank(uint32_t expertiseID,
+        libcomp::DefinitionManager* definitionManager = nullptr);
 
     /**
      * Determine if the character (or account) has a specific action cooldown
@@ -145,6 +186,13 @@ public:
         bool refresh = true);
 
     /**
+     * Get the event counter assigned to the character with a specified type
+     * @param type Event type to retrieve
+     * @return Pointer to the event counter associated to the type
+     */
+    std::shared_ptr<objects::EventCounter> GetEventCounter(int32_t type);
+
+    /**
      * Refresh the action cooldowns for the character or associated account.
      * @param accountLevel If true, the AccountWorldData level values are
      *  refreshed. If false, the character level values are refreshed.
@@ -154,8 +202,27 @@ public:
      */
     void RefreshActionCooldowns(bool accountLevel, uint32_t time = 0);
 
-    virtual bool RecalcDisabledSkills(
-        libcomp::DefinitionManager* definitionManager);
+    /**
+     * Recalculate the set of skills available to the character that are currently
+     * disabled.
+     * @param definitionManager Pointer to the DefinitionManager to use when
+     *  determining skill definitions
+     * @return true if the set of disabled skills has been updated, false if it
+     *  has not
+     */
+    bool RecalcDisabledSkills(libcomp::DefinitionManager* definitionManager);
+
+    virtual const libobjgen::UUID GetEntityUUID();
+
+    virtual uint8_t RecalculateStats(libcomp::DefinitionManager* definitionManager,
+        std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
+
+    virtual std::set<uint32_t> GetAllSkills(
+        libcomp::DefinitionManager* definitionManager, bool includeTokusei);
+
+    virtual uint8_t GetLNCType();
+
+    virtual int8_t GetGender();
 
 protected:
     virtual void BaseStatsCalculated(
@@ -191,6 +258,13 @@ private:
 
     /// Tokusei effect IDs available due to the number of quests completed
     std::list<int32_t> mQuestBonusTokuseiIDs;
+
+    /// Pointer to the current digitalization state of the character
+    std::shared_ptr<objects::DigitalizeState> mDigitalizeState;
+
+    /// System time for the next equipped item expiration to be checked
+    /// at set intervals
+    uint32_t mNextEquipmentExpiration;
 
     /// Quick access count representing the number of completed quests
     /// that can affect bonuses

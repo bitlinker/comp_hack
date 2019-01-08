@@ -12,11 +12,12 @@
         <member type="bool" name="isReplace"/>
         <member type="map" name="statusStacks">
             <key type="u32"/>   <!-- Status Type -->
-            <value type="u8"/>  <!-- Stack size -->
+            <value type="s8"/>  <!-- Stack size -->
         </member>
         <member type="map" name="statusTimes">
             <key type="u32"/>   <!-- Status Type -->
             <value type="u32"/> <!-- Explicit Time -->
         </member>
+        <member type="bool" name="allowNull"/>
     </object>
 </objgen>

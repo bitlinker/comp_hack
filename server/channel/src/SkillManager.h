@@ -57,11 +57,6 @@ class SkillExecutionContext
 {
 friend class SkillManager;
 
-public:
-    /// true if the skill should not cost anything, false if normal costs
-    /// apply
-    bool FreeCast = false;
-
 protected:
     /* The following options are for internal processing use only */
 
@@ -69,20 +64,36 @@ protected:
     /// have been handled elsewhere
     bool ApplyStatusEffects = true;
 
+    /// true if normal skill aggro should be applied, false if it should
+    /// not be applied or has already been handled
+    bool ApplyAggro = true;
+
+    /// Indicates that the skill's has already been executed
+    bool Executed = false;
+
     /// Indicates that the skill's has already been finalized
     bool Finalized = false;
+
+    /// Indicates that no skill delays should be used when executing.
+    /// Useful for "catching up" with something that should have already
+    /// started earlier.
+    bool FastTrack = false;
+
+    /// Indicates that the skill should stop processing at the next check
+    bool Fizzle = false;
 
     /// Designates the skill that is being processed
     std::shared_ptr<channel::ProcessingSkill> Skill;
 
-    /// Designates a skill that is being countered
+    /// Designates a skill that is being countered (for any defensive skill)
     std::shared_ptr<channel::ProcessingSkill> CounteredSkill;
 
     /// List of skills that are countering the current skill context
+    /// (can be any defensive skill, not just counters)
     std::list<std::shared_ptr<channel::ProcessingSkill>> CounteringSkills;
 
     /// List of skill contexts created as a result of this one, typically
-    /// as a result of a counter
+    /// as a result of a defensive skill
     std::list<std::shared_ptr<channel::SkillExecutionContext>> SubContexts;
 };
 
@@ -115,12 +126,14 @@ public:
      *  typically only set for instant activation skills at this phase. If
      *  a call to ExecuteSkill is performed after activation, the supplied
      *  targetObjectID will override this value.
+     * @param targetType Type of entity/object being targeted by the
+     *  activationObjectID (and sometimes targetObjectID as well)
      * @param ctx Special execution state for the skill (ex: free cast, counter)
      * @return true if the skill was activated successfully, false otherwise
      */
     bool ActivateSkill(const std::shared_ptr<ActiveEntityState> source,
         uint32_t skillID, int64_t activationObjectID, int64_t targetObjectID,
-        std::shared_ptr<SkillExecutionContext> ctx = 0);
+        uint8_t targetType, std::shared_ptr<SkillExecutionContext> ctx = 0);
 
     /**
      * Target/retarget the skill of a character or demon. No response is sent
@@ -161,9 +174,11 @@ public:
      * @param client Pointer to the client connection that should be sent
      *  the failure instead of the entire zone
      * @param errorCode Error code to send (defaults to generic, no message)
+     * @param activationID ID of the activated ability instance (or -1 for none)
      */
-    void SendFailure(const std::shared_ptr<ActiveEntityState> source, uint32_t skillID,
-        const std::shared_ptr<ChannelClientConnection> client, uint8_t errorCode = 0);
+    void SendFailure(const std::shared_ptr<ActiveEntityState> source,
+        uint32_t skillID, const std::shared_ptr<ChannelClientConnection> client,
+        uint8_t errorCode = 13, int8_t activationID = -1);
 
     /**
      * Determine if the specified skill is locked from use on the supplied entity.
@@ -173,6 +188,39 @@ public:
      */
     bool SkillRestricted(const std::shared_ptr<ActiveEntityState> source,
         const std::shared_ptr<objects::MiSkillData>& skillData);
+
+    /**
+     * Determine if the specified skill is locked from use in the current zone.
+     * @param skillID ID of the skill being checked
+     * @param zone Pointer to the current zone
+     * @return true if the skill is restricted from being used
+     */
+    bool SkillZoneRestricted(uint32_t skillID,
+        const std::shared_ptr<Zone> zone);
+
+    /**
+     * Determine if the skill target supplied is in range for a specific skill
+     * @param source Entity that is attempting to use the skill
+     * @param skillData Pointer to the skill's definition
+     * @param target Pointer to the targeted entity
+     * @return true if the target entity is in range, false if it is not
+     */
+    bool TargetInRange(
+        const std::shared_ptr<ActiveEntityState> source,
+        const std::shared_ptr<objects::MiSkillData>& skillData,
+        const std::shared_ptr<ActiveEntityState>& target);
+
+    /**
+     * Determine if the skill target supplied is valid for a specific skill
+     * @param source Entity that is attempting to use the skill
+     * @param skillData Pointer to the skill's definition
+     * @param target Pointer to the targeted entity
+     * @return Skill error code or -1 if no error
+     */
+    int8_t ValidateSkillTarget(
+        const std::shared_ptr<ActiveEntityState> source,
+        const std::shared_ptr<objects::MiSkillData>& skillData,
+        const std::shared_ptr<ActiveEntityState>& target);
 
     /**
      * Check fusion skill usage pre-skill validation and determine which one
@@ -194,6 +242,66 @@ public:
         const std::shared_ptr<ChannelClientConnection> client,
         uint32_t& skillID, int32_t targetEntityID, int64_t mainDemonID,
         int64_t compDemonID);
+
+    /**
+     * Begin executing a skill. If skill staggering is enabled and the target
+     * is already being attacked or is stunned, the source will be sent a
+     * retry request that will occur automatically for clients.
+     * @param pSkill Current skill processing state
+     * @param ctx Special execution state for the skill
+     * @retult false if the skill failed execution immediately, true if it
+     *  succeeded or was queued
+     */
+    bool BeginSkillExecution(std::shared_ptr<ProcessingSkill> pSkill,
+        std::shared_ptr<SkillExecutionContext> ctx);
+
+    /**
+     * Complete executing a skill. If the source has been killed or stunned
+     * and it is not a skill that ignores these, it will not execute but
+     * costs will still be paid as the skill has already been "shot" by now.
+     * @param pSkill Current skill processing state
+     * @param ctx Special execution state for the skill
+     * @param syncTime Accurate skill completion time, useful for server
+     *  processing delay correction
+     * @retult false if the skill failed execution immediately, true if it
+     *  succeeded or was queued
+     */
+    bool CompleteSkillExecution(std::shared_ptr<ProcessingSkill> pSkill,
+        std::shared_ptr<SkillExecutionContext> ctx, uint64_t syncTime);
+
+    /**
+     * Complete executing a skill with a projectile, simulating the effect
+     * of the projectile having just hit
+     * @param pSkill Current skill processing state
+     * @param ctx Special execution state for the skill
+     */
+    void ProjectileHit(std::shared_ptr<ProcessingSkill> pSkill,
+        std::shared_ptr<SkillExecutionContext> ctx);
+
+    /**
+     * Determine how much a skill would cost to execute at a base level
+     * for any executing entity, not just a player entity. Useful for AI
+     * determining skill usefullness. Determining if the costs CAN be paid
+     * must be handled elsewhere.
+     * @param source Poitner to the entity that would use the skill
+     * @param skillData Pointer to the skill definition
+     * @param hpCost Output parameter containing the HP cost, adjusted
+     *  for tokusei
+     * @param mpCost Output parameter containing the MP cost, adjusted
+     *  for tokusei
+     * @param bulletCost Output parameter containing how many bullets
+     *  would be consumed by the skill
+     * @param itemCosts Output parameter containing how many items would
+     *  be consumed by the skill (type to count)
+     * @return true if no errors were encountered in the costs, false if
+     *  an error occurred
+     */
+    bool DetermineNormalCosts(
+        const std::shared_ptr<ActiveEntityState>& source,
+        const std::shared_ptr<objects::MiSkillData>& skillData,
+        int32_t& hpCost, int32_t& mpCost, uint16_t& bulletCost,
+        std::unordered_map<uint32_t, uint32_t>& itemCosts,
+        std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
 
 private:
     /**
@@ -309,6 +417,23 @@ private:
         bool isTarget, const std::shared_ptr<ActiveEntityState>& otherState);
 
     /**
+     * Evaluate TokuseiSkillConditions relative to the current skill and
+     * supplied entities.
+     * @param eState Pointer to the entity the effect applies to
+     * @param conditions List of points to the condition definitions
+     * @param pSkill Pointer to the current skill processing state
+     * @param otherState Pointer to the source entity if a target is being
+     *  calculated or the target in question if the source is being calculated.
+     *  If the skill is still being checked validity, supplying no entity
+     *  for this while calculating against the source is valid.
+     * @return Tokusei evaluation result for the current state
+     */
+    bool EvaluateTokuseiSkillConditions(const std::shared_ptr<ActiveEntityState>& eState,
+        const std::list<std::shared_ptr<objects::TokuseiSkillCondition>>& conditions,
+        const std::shared_ptr<channel::ProcessingSkill>& pSkill,
+        const std::shared_ptr<ActiveEntityState>& otherState);
+
+    /**
      * Evaluate a TokuseiSkillCondition relative to the current skill and
      * supplied entities.
      * @param eState Pointer to the entity the effect applies to
@@ -337,22 +462,28 @@ private:
         const std::shared_ptr<channel::ProcessingSkill>& pSkill);
 
     /**
-     * Determine how each targeted entity reacts to being hit by a skill. This
-     * assumes NRA has already adjusted who will is a target.
+     * Determine how the primary reacts to being hit by a skill by either
+     * guarding, dodging or countering. This assumes NRA has already been
+     * applied. Upon success a target for the entity will be added to the
+     * skill's targets list.
      * @param source Pointer to the state of the source entity
      * @param pSkill Current skill processing state
+     * @param guard If true, guard skills will be checked too, if false only
+     *  dodge and counter will be checked
+     * @return true if the skill was countered, false if it was not
      */
-    void CheckSkillHits(const std::shared_ptr<ActiveEntityState>& source,
-        const std::shared_ptr<channel::ProcessingSkill>& pSkill);
+    bool ApplyPrimaryCounter(const std::shared_ptr<ActiveEntityState>& source,
+        const std::shared_ptr<channel::ProcessingSkill>& pSkill, bool guard);
 
     /**
      * Execute or cancel the guard skill currently being used by the
      * supplied target from being hit by the source entity
      * @param source Pointer to the state of the source entity
-     * @param target Pointer to the state of the target entity
+     * @param target Skill targeted entity
      * @param pSkill Skill processing state of the skill being guarded
+     * @return true if the skill was guarded against, false if it was not
      */
-    void HandleGuard(const std::shared_ptr<ActiveEntityState>& source,
+    bool HandleGuard(const std::shared_ptr<ActiveEntityState>& source,
         SkillTargetResult& target, const std::shared_ptr<
         channel::ProcessingSkill>& pSkill);
 
@@ -366,10 +497,11 @@ private:
      * CounteringSkills list, since technically multiple skills can
      * counter one.
      * @param source Pointer to the state of the source entity
-     * @param target Pointer to the state of the target entity
-     * @param pSkill Skill processing state of the skill being counterd
+     * @param target Skill targeted entity
+     * @param pSkill Skill processing state of the skill being countered
+     * @return true if the skill was countered, false if it was not
      */
-    void HandleCounter(const std::shared_ptr<ActiveEntityState>& source,
+    bool HandleCounter(const std::shared_ptr<ActiveEntityState>& source,
         SkillTargetResult& target, const std::shared_ptr<
         channel::ProcessingSkill>& pSkill);
 
@@ -377,17 +509,31 @@ private:
      * Execute or cancel the dodge skill currently being used by the
      * supplied target from being hit by the source entity
      * @param source Pointer to the state of the source entity
-     * @param target Pointer to the state of the target entity
+     * @param target Skill targeted entity
      * @param pSkill Skill processing state of the skill being dodged
+     * @return true if the skill was dodged, false if it was not
      */
-    void HandleDodge(const std::shared_ptr<ActiveEntityState>& source,
+    bool HandleDodge(const std::shared_ptr<ActiveEntityState>& source,
+        SkillTargetResult& target, const std::shared_ptr<
+        channel::ProcessingSkill>& pSkill);
+
+    /**
+     * Apply target skill interrupt based upon timing and state of the target
+     * entity's skill being charged or executed
+     * @param source Pointer to the state of the source entity
+     * @param target Skill targeted entity
+     * @param pSkill Skill processing state of the skill being guarded
+     * @return true if the target had a skill that was interrupted, false if
+     *  they did not
+     */
+    bool HandleSkillInterrupt(const std::shared_ptr<ActiveEntityState>& source,
         SkillTargetResult& target, const std::shared_ptr<
         channel::ProcessingSkill>& pSkill);
 
     /**
      * Handle all status effect application logic for a specific target
      * @param source Pointer to the state of the source entity
-     * @param target Pointer to the state of the target entity
+     * @param target Skill targeted entity
      * @param pSkill Skill processing state of the skill being executed
      * @return Set of status effects being applied that will be cancelled
      *  if the entity is killed as a result of the skill
@@ -416,6 +562,17 @@ private:
         const std::shared_ptr<Zone>& zone);
 
     /**
+     * Increase digitalize experience points for the supplied source's party
+     * based upon defeated enemies. Points are granted at a flat rate and
+     * unlike XP are not shared with other parties that dealt damage.
+     * @param enemies List of pointers to enemies that have been killed
+     * @param zone Pointer ot the zone where the enemies were killed
+     */
+    void HandleDigitalizeXP(const std::shared_ptr<ActiveEntityState> source,
+        const std::list<std::shared_ptr<ActiveEntityState>>& enemies,
+        const std::shared_ptr<Zone>& zone);
+
+    /**
      * Handle all logic related to defeating an enemy encounter through combat
      * or talk skill outcome. Enemy despawn does not count as a defeat and should
      * be handled separately. If the encounter is not actually defeated, nothing
@@ -438,10 +595,17 @@ private:
         channel::ProcessingSkill>& pSkill);
 
     /**
+     * Update all PvP instance recorded statistics if the match is active
+     * @param pSkill Skill processing state of the skill being executed
+     */
+    void UpdatePvPStats(const std::shared_ptr<
+        channel::ProcessingSkill>& pSkill);
+
+    /**
      * Determine if the supplied target should receive any negotation
      * related effects from the skill used and apply them if applicable.
      * @param source Pointer to the state of the source entity
-     * @param target Pointer to the state of the target entity
+     * @param target Skill targeted entity
      * @param pSkill Skill processing state of the skill being executed
      * @return true if the negotation has completed
      */
@@ -491,6 +655,13 @@ private:
         const std::shared_ptr<channel::ProcessingSkill>& pSkill);
 
     /**
+     * Interrupt any active events associated to the supplied world CIDs as
+     * a result of being hit by a combat skill
+     * @param worldCIDs List of player world CIDs
+     */
+    void InterruptEvents(const std::set<int32_t>& worldCIDs);
+
+    /**
      * Toggle a switch skill, not handled by a special handler.
      * @param client Pointer to the client connection that activated the skill
      * @param activated Pointer to the activated ability instance
@@ -534,6 +705,18 @@ private:
      */
     int16_t GetEntityRate(const std::shared_ptr<ActiveEntityState> eState,
         std::shared_ptr<objects::CalculatedEntityState> calcState, bool taken);
+
+    /**
+     * Get the specific affinity boost associated to the supplied entity. Max
+     * affinity cap is applied to the value.
+     * @param eState Pointer to the entity
+     * @param calcState Pointer to entity's calculated state
+     * @param boostType CorrectTbl index of the boost type
+     * @return Calculated boost level as a decimal
+     */
+    float GetAffinityBoost(const std::shared_ptr<ActiveEntityState> eState,
+        std::shared_ptr<objects::CalculatedEntityState> calcState,
+        CorrectTbl boostType);
 
     /**
      * Calculate skill damage or healing using the default formula
@@ -600,21 +783,41 @@ private:
      * Set null, reflect or absorb on the skill target
      * @param target Target to update with NRA flags
      * @param skill Current skill processing state
+     * @param reduceShields If true, any NRA shields will be consumed should
+     *  they apply first
      * @return true if the damage was reflected, otherwise false
      */
-    bool SetNRA(SkillTargetResult& target, ProcessingSkill& skill);
+    bool SetNRA(SkillTargetResult& target, ProcessingSkill& skill,
+        bool reduceShields = true);
 
     /**
      * Get the result of the skill target's null, reflect or absorb checks
      * @param target Target to determine NRA for
      * @param skill Current skill processing state
      * @param effectiveAffinity Target specific affinity type for the skill
-     * @param effectiveOnly If true only the supplied affinity will be checked,
-     *  otherwise the dependency type and base affinities will be checked as well
+     * @param resultAffinity Output parameter containing the NRA affinity type
+     *  if it occurs
      * @return NRA index value or 0 for none
      */
     uint8_t GetNRAResult(SkillTargetResult& target, ProcessingSkill& skill,
-        uint8_t effectiveAffinity, bool effectiveOnly = false);
+        uint8_t effectiveAffinity);
+
+    /**
+     * Get the result of the skill target's null, reflect or absorb checks
+     * @param target Target to determine NRA for
+     * @param skill Current skill processing state
+     * @param effectiveAffinity Target specific affinity type for the skill
+     * @param resultAffinity Output parameter containing the NRA affinity type
+     *  if it occurs
+     * @param effectiveOnly If true, only the supplied affinity will be checked,
+     *  otherwise the dependency type and base affinities will be checked as well
+     * @param reduceShields If true, any NRA shields will be consumed should
+     *  they apply first
+     * @return NRA index value or 0 for none
+     */
+    uint8_t GetNRAResult(SkillTargetResult& target, ProcessingSkill& skill,
+        uint8_t effectiveAffinity, uint8_t& resultAffinity,
+        bool effectiveOnly, bool reduceShields);
 
     /**
      * Get a random stack size for a status effect being applied
@@ -623,19 +826,24 @@ private:
      * @return Random stack size between the range or 0 if the range
      *  is invalid
      */
-    uint8_t CalculateStatusEffectStack(int8_t minStack, int8_t maxStack) const;
+    int8_t CalculateStatusEffectStack(int8_t minStack, int8_t maxStack) const;
 
     /**
      * Gather drops for a specific enemy spawn from its own drops, global drops
      * and demon family drops.
-     * @param spawn Pointer to the spawn information for the enemy which may
-     *  or may not exist (ex: GM created enemy)
+     * @param source Pointer to the entity that activated the skill
+     * @param eState Pointer to enemy which may or may not have spawn
+     *  information (ex: GM created enemy)
+     * @param zone Pointer to the zone the entities belong to
      * @param giftMode true if the enemy's negotation gifts should be gathered
      *  instead of their normal drops
-     * @return List of item drops from each different source
+     * @return Map of drop set types to list of item drops from each different
+     *  source
      */
-    std::list<std::shared_ptr<objects::ItemDrop>> GetItemDrops(
-        const std::shared_ptr<objects::Spawn>& spawn, bool giftMode = false) const;
+    std::unordered_map<uint8_t, std::list<std::shared_ptr<objects::ItemDrop>>>
+        GetItemDrops(const std::shared_ptr<ActiveEntityState>& source,
+            const std::shared_ptr<ActiveEntityState>& eState,
+            const std::shared_ptr<Zone>& zone, bool giftMode = false);
 
     /**
      * Schedule the adjustment of who is a valid looter for one or more loot
@@ -650,17 +858,27 @@ private:
 
     /**
      * Execute post execution steps like notifying the client that the skill
-     * has executed and updating any related expertises. If the skill's execution
-     * results in additional uses remaining, make a copy of the instance to
-     * preserve execution values.
+     * has executed and updating any related expertises
      * @param client Pointer to the client connection that activated the skill
      * @param ctx Special execution state for the skill
      * @param activated Pointer to the activated ability instance
-     * @return Pointer to the ability instance being finalized
      */
-    std::shared_ptr<objects::ActivatedAbility>
-        FinalizeSkillExecution(const std::shared_ptr<ChannelClientConnection> client,
+     void FinalizeSkillExecution(
+        const std::shared_ptr<ChannelClientConnection> client,
         const std::shared_ptr<SkillExecutionContext>& ctx,
+        std::shared_ptr<objects::ActivatedAbility> activated);
+
+    /**
+     * Finalize a skill that has been activated and remove it from the entity
+     * if it does not have additional uses. If the skill's execution
+     * results in additional uses remaining, make a copy of the instance to
+     * preserve execution values.
+     * @param ctx Special execution state for the skill
+     * @param activated Pointer to the activated ability instance
+     * @return Pointer to the ability instance being executed
+     */
+     std::shared_ptr<objects::ActivatedAbility>
+        FinalizeSkill(const std::shared_ptr<SkillExecutionContext>& ctx,
         std::shared_ptr<objects::ActivatedAbility> activated);
 
     /**
@@ -719,7 +937,66 @@ private:
         const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
-     * Execute the a skill that always adds a specific status effect after the
+     * Execute an enemy despawning skill. This mimics the behavior of the skill
+     * in other games as it was not originally released.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Despawn(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a targeted spawn desummon skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Desummon(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a skill that results in digitalizing the player character.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Digitalize(
+        const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a skill that forces the cancellation of all targets hit.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool DigitalizeBreak(
+        const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a digitalize state cancellation skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool DigitalizeCancel(
+        const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a skill that always adds a specific status effect after the
      * skill's execution.
      * @param activated Pointer to the activated ability instance
      * @param ctx Special execution state for the skill
@@ -738,6 +1015,17 @@ private:
      *  this will always fail if it is null
      */
     bool EquipItem(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute the aggro clearing "Estoma" skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Estoma(const std::shared_ptr<objects::ActivatedAbility>& activated,
         const std::shared_ptr<SkillExecutionContext>& ctx,
         const std::shared_ptr<ChannelClientConnection>& client);
 
@@ -773,6 +1061,41 @@ private:
      *  this will always fail if it is null
      */
     bool ForgetAllExpertiseSkills(
+        const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute the aggro drawing "liberama" skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Liberama(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a minion despawning skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool MinionDespawn(
+        const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a minion spawning skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool MinionSpawn(
         const std::shared_ptr<objects::ActivatedAbility>& activated,
         const std::shared_ptr<SkillExecutionContext>& ctx,
         const std::shared_ptr<ChannelClientConnection>& client);
@@ -844,6 +1167,28 @@ private:
         const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
+     * Execute a (non-zone specific) enemy spawning skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool Spawn(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Execute a zone specific enemy spawning skill.
+     * @param activated Pointer to the activated ability instance
+     * @param ctx Special execution state for the skill
+     * @param client Pointer to the client connection that activated the skill,
+     *  this will always fail if it is null
+     */
+    bool SpawnZone(const std::shared_ptr<objects::ActivatedAbility>& activated,
+        const std::shared_ptr<SkillExecutionContext>& ctx,
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
      * Execute the "summon demon" skill.
      * @param activated Pointer to the activated ability instance
      * @param ctx Special execution state for the skill
@@ -900,28 +1245,37 @@ private:
         uint32_t demonType, uint32_t itemType, int8_t rarity, uint32_t skillID);
 
     /**
+     * Fizzle a skill that has already started processing and perform any
+     * necessary cleanup steps.
+     * @param ctx Special execution state for the skill
+     */
+    void Fizzle(const std::shared_ptr<SkillExecutionContext>& ctx);
+
+    /**
      * Notify the client that a skill has been activated.  The client will notify
      * the server when the specified charge time has elapsed for execution if
      * applicable.
-     * @param activated Pointer to the activated ability instance
+     * @param pSkill Current skill processing state
      */
-    void SendActivateSkill(std::shared_ptr<objects::ActivatedAbility> activated);
+    void SendActivateSkill(
+        const std::shared_ptr<channel::ProcessingSkill>& pSkill);
 
     /**
      * Notify the client that a skill is executing.
-     * @param activated Pointer to the activated ability instance
+     * @param pSkill Current skill processing state
      */
-    void SendExecuteSkill(std::shared_ptr<objects::ActivatedAbility> activated);
+    void SendExecuteSkill(
+        const std::shared_ptr<channel::ProcessingSkill>& pSkill);
 
     /**
      * Notify the client that a skill is immediately executing without
      * some normal prerequisite packets.
-     * @param activated Pointer to the activated ability instance
+     * @param pSkill Current skill processing state
      * @param errorCode If the skill execution failed an error code will
      *  be supplied here.
      */
-    void SendExecuteSkillInstant(std::shared_ptr<
-        objects::ActivatedAbility> activated, uint8_t errorCode);
+    void SendExecuteSkillInstant(const std::shared_ptr<
+        channel::ProcessingSkill>& pSkill, uint8_t errorCode);
 
     /**
      * Notify the client that a skill is complete.
@@ -932,6 +1286,17 @@ private:
      */
     void SendCompleteSkill(std::shared_ptr<objects::ActivatedAbility> activated,
         uint8_t mode);
+
+    /**
+     * Determine the summon speed for the supplied client and the targeted
+     * demon in the COMP.
+     * @param pSkill Current skill processing state
+     * @param client Pointer to the client connection
+     * @return Summon charge time in milliseconds, 0 on error
+     */
+    uint32_t GetSummonSpeed(
+        const std::shared_ptr<channel::ProcessingSkill>& pSkill,
+        const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
      * Determine if the supplied skill data will involve talk results either
@@ -945,14 +1310,29 @@ private:
     bool IsTalkSkill(const std::shared_ptr<objects::MiSkillData>& skillData,
         bool primaryOnly);
 
+    /**
+     * Determine if invincibility frames are enabled for the server to
+     * adjust skill timing
+     * @return true if I-frames are enabled, false if they are not
+     */
+    bool IFramesEnabled();
+
     /// Pointer to the channel server
     std::weak_ptr<ChannelServer> mServer;
 
-    /// Map of skill function IDs mapped to manager functions.
+    /// Map of skill function IDs mapped to manager functions that execute
+    /// in place of the normal skill handler.
     std::unordered_map<uint16_t, std::function<bool(SkillManager&,
         const std::shared_ptr<objects::ActivatedAbility>&,
         const std::shared_ptr<SkillExecutionContext>&,
         const std::shared_ptr<ChannelClientConnection>&)>> mSkillFunctions;
+
+    /// Map of skill function IDs mapped to manager functions that perform
+    /// special actions after the normal skill processing completes.
+    std::unordered_map<uint16_t, std::function<bool(SkillManager&,
+        const std::shared_ptr<objects::ActivatedAbility>&,
+        const std::shared_ptr<SkillExecutionContext>&,
+        const std::shared_ptr<ChannelClientConnection>&)>> mSkillEffectFunctions;
 };
 
 } // namespace channel

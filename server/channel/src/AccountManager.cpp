@@ -38,6 +38,7 @@
 #include <AccountWorldData.h>
 #include <BazaarData.h>
 #include <BazaarItem.h>
+#include <ChannelLogin.h>
 #include <CharacterLogin.h>
 #include <CharacterProgress.h>
 #include <Clan.h>
@@ -45,6 +46,8 @@
 #include <CultureData.h>
 #include <DemonBox.h>
 #include <DemonQuest.h>
+#include <DigitalizeState.h>
+#include <EventCounter.h>
 #include <EventState.h>
 #include <Expertise.h>
 #include <FriendSettings.h>
@@ -55,6 +58,8 @@
 #include <MiItemBasicData.h>
 #include <MiItemData.h>
 #include <MiPossessionData.h>
+#include <PvPData.h>
+#include <PvPMatch.h>
 #include <Quest.h>
 #include <ServerZone.h>
 
@@ -64,6 +69,7 @@
 #include "CharacterManager.h"
 #include "EventManager.h"
 #include "ManagerConnection.h"
+#include "MatchManager.h"
 #include "TokuseiManager.h"
 #include "ZoneManager.h"
 
@@ -104,8 +110,9 @@ void AccountManager::HandleLoginRequest(const std::shared_ptr<
 
         libcomp::Packet request;
         request.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGIN);
-        request.WriteU32(sessionKey);
+        request.WriteU8(0); // Normal request
         request.WriteString16Little(libcomp::Convert::ENCODING_UTF8, username);
+        request.WriteU32(sessionKey);
 
         worldConnection->SendPacket(request);
     }
@@ -132,6 +139,7 @@ void AccountManager::HandleLoginResponse(const std::shared_ptr<
 
     if(InitializeCharacter(character, state))
     {
+        auto characterManager = server->GetCharacterManager();
         auto definitionManager = server->GetDefinitionManager();
         auto demon = character->GetActiveDemon().Get();
 
@@ -147,6 +155,47 @@ void AccountManager::HandleLoginResponse(const std::shared_ptr<
         dState->SetEntityID(server->GetNextEntityID());
         dState->RefreshLearningSkills(0, definitionManager);
 
+        // Cancel any status effects that shouldn't still be here
+        characterManager->CancelStatusEffects(client, EFFECT_CANCEL_ZONEOUT);
+
+        auto channelLogin = state->GetChannelLogin();
+        if(channelLogin && channelLogin->GetFromChannel() >= 0)
+        {
+            // Update the player state to match previous channel's state
+            // The login state is cleared later after sending packet data
+            cState->SetActiveSwitchSkills(channelLogin
+                ->GetActiveSwitchSkills());
+
+            // If the character was digitalized, set that up again
+            auto dgDemon = std::dynamic_pointer_cast<objects::Demon>(
+                libcomp::PersistentObject::GetObjectByUUID(channelLogin
+                    ->GetDigitalizeDemon()));
+            if(dgDemon && cState->StatusEffectActive(
+                SVR_CONST.STATUS_DIGITALIZE[(size_t)cState->GetGender()]))
+            {
+                cState->Digitalize(dgDemon, definitionManager);
+            }
+
+            // If one of the active switch skills was a mount skill, add to
+            // the demon too
+            for(uint32_t mountSkillID : definitionManager->GetFunctionIDSkills(
+                SVR_CONST.SKILL_MOUNT))
+            {
+                if(channelLogin->ActiveSwitchSkillsContains(mountSkillID))
+                {
+                    dState->InsertActiveSwitchSkills(mountSkillID);
+                    dState->SetDisplayState(ActiveDisplayState_t::MOUNT);
+                }
+            }
+        }
+        else
+        {
+            // No channel switch happening, we shouldn't have logout
+            // cancel effects
+            characterManager->CancelStatusEffects(client,
+                EFFECT_CANCEL_LOGOUT);
+        }
+
         // Initialize some run-time data
         cState->RecalcEquipState(definitionManager);
         cState->UpdateQuestState(definitionManager);
@@ -158,6 +207,7 @@ void AccountManager::HandleLoginResponse(const std::shared_ptr<
         state->Register();
 
         dState->UpdateSharedState(character.Get(), definitionManager);
+        dState->UpdateDemonState(definitionManager);
 
         // Recalculating the character will recalculate the partner too
         server->GetTokuseiManager()->Recalculate(cState, true,
@@ -165,6 +215,24 @@ void AccountManager::HandleLoginResponse(const std::shared_ptr<
 
         cState->RecalculateStats(definitionManager);
         dState->RecalculateStats(definitionManager);
+
+        if(channelLogin)
+        {
+            // Remove any switch skills no longer active or valid
+            std::set<uint32_t> removeSkills;
+            for(uint32_t skillID : channelLogin->GetActiveSwitchSkills())
+            {
+                if(!cState->ActiveSwitchSkillsContains(skillID))
+                {
+                    removeSkills.insert(skillID);
+                }
+            }
+
+            for(uint32_t skillID : removeSkills)
+            {
+                channelLogin->RemoveActiveSwitchSkills(skillID);
+            }
+        }
 
         reply.WriteU32Little(1);
 
@@ -196,43 +264,101 @@ void AccountManager::HandleLogoutRequest(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     LogoutCode_t code, uint8_t channelIdx)
 {
+    // Queue disconnect and start the timer
+    libcomp::Packet reply;
+    reply.WritePacketCode(
+        ChannelToClientPacketCode_t::PACKET_LOGOUT);
+    reply.WriteU32Little(
+        (uint32_t)LogoutPacketAction_t::LOGOUT_PREPARE);
+
+    client->SendPacket(reply);
+
+    // Countdown for 10 seconds
+    uint64_t timeout = (uint64_t)(ChannelServer::GetServerTime() +
+        10000000ULL);
+
+    auto channelLogin = client->GetClientState()->GetChannelLogin();
     switch(code)
     {
-        case LogoutCode_t::LOGOUT_CODE_QUIT:
-            {
-                // No need to tell the world, just disconnect
-                libcomp::Packet reply;
-                reply.WritePacketCode(
-                    ChannelToClientPacketCode_t::PACKET_LOGOUT);
-                reply.WriteU32Little(
-                    (uint32_t)LogoutPacketAction_t::LOGOUT_PREPARE);
-                client->QueuePacket(reply);
+    case LogoutCode_t::LOGOUT_CODE_QUIT:
+        {
+            // Just disconnect, no need to tell the world
+            client->GetClientState()->SetLogoutTimer(timeout);
+            mServer.lock()->GetTimerManager()->ScheduleEventIn(10, []
+                (std::shared_ptr<channel::ChannelClientConnection> pClient,
+                uint64_t pTimeout)
+                {
+                    if(pClient->GetClientState()->GetLogoutTimer() ==
+                        pTimeout)
+                    {
+                        libcomp::Packet p;
+                        p.WritePacketCode(
+                            ChannelToClientPacketCode_t::PACKET_LOGOUT);
+                        p.WriteU32Little((uint32_t)
+                            LogoutPacketAction_t::LOGOUT_DISCONNECT);
+                        pClient->SendPacket(p);
+                    }
+                }, client, timeout);
+        }
+        break;
+    case LogoutCode_t::LOGOUT_CODE_SWITCH:
+        if(channelLogin)
+        {
+            // Request logout immediately
+            auto server = mServer.lock();
+            auto account = client->GetClientState()
+                ->GetAccountLogin()->GetAccount();
 
-                reply.Clear();
-                reply.WritePacketCode(
-                    ChannelToClientPacketCode_t::PACKET_LOGOUT);
-                reply.WriteU32Little(
-                    (uint32_t)LogoutPacketAction_t::LOGOUT_DISCONNECT);
-                client->SendPacket(reply);
-            }
-            break;
-        case LogoutCode_t::LOGOUT_CODE_SWITCH:
-            {
-                // Tell the world we're performing a channel switch and
-                // wait for the message to be responded to
-                auto account = client->GetClientState()->GetAccountLogin()->GetAccount();
+            libcomp::Packet p;
+            p.WritePacketCode(
+                InternalPacketCode_t::PACKET_ACCOUNT_LOGOUT);
+            p.WriteU32Little((uint32_t)
+                LogoutPacketAction_t::LOGOUT_CHANNEL_SWITCH);
+            p.WriteString16Little(
+                libcomp::Convert::Encoding_t::ENCODING_UTF8,
+                account->GetUsername());
+            channelLogin->SavePacket(p);
 
-                libcomp::Packet p;
-                p.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGOUT);
-                p.WriteU32Little((uint32_t)LogoutPacketAction_t::LOGOUT_CHANNEL_SWITCH);
-                p.WriteString16Little(
-                    libcomp::Convert::Encoding_t::ENCODING_UTF8, account->GetUsername());
-                p.WriteS8((int8_t)channelIdx);
-                mServer.lock()->GetManagerConnection()->GetWorldConnection()->SendPacket(p);
-            }
-            break;
-        default:
-            break;
+            server->GetManagerConnection()
+                ->GetWorldConnection()->SendPacket(p);
+        }
+        else
+        {
+            // Tell the world we're performing a channel switch and wait for
+            // the message to be responded to
+            auto server = mServer.lock();
+            client->GetClientState()->SetLogoutTimer(timeout);
+            server->GetTimerManager()->ScheduleEventIn(10, []
+                (std::shared_ptr<ChannelServer> pServer,
+                std::shared_ptr<channel::ChannelClientConnection> pClient,
+                uint8_t pChannelIdx, uint64_t pTimeout)
+                {
+                    if(pClient->GetClientState()->GetLogoutTimer() ==
+                        pTimeout)
+                    {
+                        auto pChannelLogin = pServer->GetAccountManager()
+                            ->PrepareChannelChange(pClient, 0, 0, pChannelIdx);
+                        auto account = pClient->GetClientState()
+                            ->GetAccountLogin()->GetAccount();
+
+                        libcomp::Packet p;
+                        p.WritePacketCode(
+                            InternalPacketCode_t::PACKET_ACCOUNT_LOGOUT);
+                        p.WriteU32Little((uint32_t)
+                            LogoutPacketAction_t::LOGOUT_CHANNEL_SWITCH);
+                        p.WriteString16Little(
+                            libcomp::Convert::Encoding_t::ENCODING_UTF8,
+                            account->GetUsername());
+                        pChannelLogin->SavePacket(p);
+
+                        pServer->GetManagerConnection()
+                            ->GetWorldConnection()->SendPacket(p);
+                    }
+                }, server, client, channelIdx, timeout);
+        }
+        break;
+    default:
+        break;
     }
 }
 
@@ -269,6 +395,20 @@ void AccountManager::Logout(const std::shared_ptr<
             server->GetEventManager()->EndDemonQuest(client);
         }
 
+        auto dgState = cState->GetDigitalizeState();
+        if(dgState && !state->GetChannelLogin())
+        {
+            // Active digitalize must be completed
+            server->GetCharacterManager()->DigitalizeEnd(client);
+        }
+
+        auto match = state->GetPendingMatch();
+        if(match)
+        {
+            // Cleanup any pending matches
+            server->GetMatchManager()->CleanupPendingMatch(client);
+        }
+
         if(!LogoutCharacter(state))
         {
             LOG_ERROR(libcomp::String("Character %1 failed to save on account"
@@ -282,13 +422,89 @@ void AccountManager::Logout(const std::shared_ptr<
         // Remove the connection if it hasn't been removed already.
         server->GetManagerConnection()->RemoveClientConnection(client);
 
+        // Unload the account and character so they drop from the cache once
+        // logout completes
         libcomp::ObjectReference<
             objects::Account>::Unload(account->GetUUID());
+        libcomp::ObjectReference<
+            objects::Character>::Unload(character->GetUUID());
 
         // Remove all secondary caching
         server->GetTokuseiManager()->RemoveTrackingEntities(
             state->GetWorldCID());
     }
+}
+
+void AccountManager::RequestDisconnect(const std::shared_ptr<
+    channel::ChannelClientConnection>& client)
+{
+    libcomp::Packet request;
+    request.WritePacketCode(
+        ChannelToClientPacketCode_t::PACKET_LOGOUT);
+    request.WriteU32Little(
+        (uint32_t)LogoutPacketAction_t::LOGOUT_DISCONNECT);
+
+    client->SendPacket(request, true);
+}
+
+std::shared_ptr<objects::ChannelLogin> AccountManager::PrepareChannelChange(
+    const std::shared_ptr<channel::ChannelClientConnection>& client,
+    uint32_t zoneID, uint32_t dynamicMapID, uint8_t channelID)
+{
+    auto state = client->GetClientState();
+    auto server = mServer.lock();
+
+    auto cState = state->GetCharacterState();
+    auto character = cState->GetEntity();
+    if(!zoneID)
+    {
+        // Use current info and perform logout save
+        auto zone = state->GetZone();
+        if(zone)
+        {
+            zoneID = zone->GetDefinitionID();
+            dynamicMapID = zone->GetDynamicMapID();
+
+            if(character)
+            {
+                character->SetLogoutZone(zoneID);
+                character->SetLogoutX(cState->GetCurrentX());
+                character->SetLogoutY(cState->GetCurrentY());
+                character->SetLogoutRotation(cState->GetCurrentRotation());
+            }
+        }
+    }
+
+    auto channelLogin = std::make_shared<objects::ChannelLogin>();
+    channelLogin->SetToZoneID(zoneID);
+    channelLogin->SetToDynamicMapID(dynamicMapID);
+    channelLogin->SetFromChannel((int8_t)server->GetChannelID());
+    channelLogin->SetToChannel((int8_t)channelID);
+
+    // Set current state values
+    auto dgState = state->GetCharacterState()->GetDigitalizeState();
+    if(dgState && dgState->GetTimeLimited())
+    {
+        channelLogin->SetDigitalizeDemon(dgState->GetDemon().GetUUID());
+    }
+
+    channelLogin->SetActiveSwitchSkills(cState->GetActiveSwitchSkills());
+
+    state->SetChannelLogin(channelLogin);
+
+    // Pull the current event state
+    server->GetEventManager()->SetChannelLoginEvent(client);
+
+    // Save the logout information now (this will also stop any keep alive
+    // refreshes)
+    if(character)
+    {
+        LogoutCharacter(state);
+
+        state->SetLogoutSave(false);
+    }
+
+    return channelLogin;
 }
 
 void AccountManager::Authenticate(const std::shared_ptr<
@@ -330,12 +546,7 @@ bool AccountManager::IncreaseCP(const std::shared_ptr<
 
     if(lobbyDB->ProcessChangeSet(opChangeset))
     {
-        auto syncManager = server->GetChannelSyncManager();
-        if(syncManager->UpdateRecord(account, "Account"))
-        {
-            syncManager->SyncOutgoing();
-        }
-
+        server->GetChannelSyncManager()->SyncRecordUpdate(account, "Account");
         return true;
     }
 
@@ -357,6 +568,50 @@ void AccountManager::SendCPBalance(const std::shared_ptr<
     reply.WriteS32Little(0);
 
     client->SendPacket(reply);
+}
+
+std::unordered_map<int32_t,
+    std::shared_ptr<objects::CharacterLogin>> AccountManager::GetActiveLogins()
+{
+    return mActiveLogins;
+}
+
+std::shared_ptr<objects::CharacterLogin>
+    AccountManager::GetActiveLogin(const libobjgen::UUID& characterUID)
+{
+    libcomp::String lookup = characterUID.ToString();
+
+    std::lock_guard<std::mutex> lock(mLock);
+    auto it = mCIDMap.find(lookup);
+    if(it != mCIDMap.end())
+    {
+        auto it2 = mActiveLogins.find(it->second);
+        if(it2 != mActiveLogins.end())
+        {
+            return it2->second;
+        }
+    }
+
+    return nullptr;
+}
+
+void AccountManager::UpdateLogins(
+    std::list<std::shared_ptr<objects::CharacterLogin>> updates,
+    std::list<std::shared_ptr<objects::CharacterLogin>> removes)
+{
+    std::lock_guard<std::mutex> lock(mLock);
+    for(auto update : updates)
+    {
+        mActiveLogins[update->GetWorldCID()] = update;
+        mCIDMap[update->GetCharacter().GetUUID().ToString()] = update
+            ->GetWorldCID();
+    }
+
+    for(auto remove : removes)
+    {
+        mActiveLogins.erase(remove->GetWorldCID());
+        mCIDMap.erase(remove->GetCharacter().GetUUID().ToString());
+    }
 }
 
 bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
@@ -425,8 +680,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!worldData->LoadBazaarData(db))
         {
-            LOG_ERROR(libcomp::String("BazaarData could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("BazaarData %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(worldData->GetBazaarData().GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -453,7 +709,8 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
             if(!bItem.Get())
             {
                 LOG_WARNING(libcomp::String("Clearing invalid"
-                    " BazaarItem saved on BazaarData for account: %1\n")
+                    " BazaarItem %1 saved on BazaarData for account: %2\n")
+                    .Arg(bItem.GetUUID().ToString())
                     .Arg(state->GetAccountUID().ToString()));
                 bazaarData->SetItems(i, NULLUUID);
                 openSlots.insert(i);
@@ -496,8 +753,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     // Progress
     if(!character->LoadProgress(db))
     {
-        LOG_ERROR(libcomp::String("CharacterProgress could"
-            " not be initialized for account: %1\n")
+        LOG_ERROR(libcomp::String("CharacterProgress %1 could"
+            " not be initialized for account: %2\n")
+            .Arg(character->GetProgress().GetUUID().ToString())
             .Arg(state->GetAccountUID().ToString()));
         return false;
     }
@@ -505,8 +763,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     // Friend Settings
     if(!character->LoadFriendSettings(db))
     {
-        LOG_ERROR(libcomp::String("FriendSettings could"
-            " not be initialized for account: %1\n")
+        LOG_ERROR(libcomp::String("FriendSettings %1 could"
+            " not be initialized for account: %2\n")
+            .Arg(character->GetFriendSettings().GetUUID().ToString())
             .Arg(state->GetAccountUID().ToString()));
         return false;
     }
@@ -518,11 +777,23 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
         if(!cultureData || (!cultureData->GetItem().IsNull() &&
             !cultureData->LoadItem(db)))
         {
-            LOG_ERROR(libcomp::String("CultureData could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("CultureData %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(character->GetCultureData().GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
+    }
+
+    // PvP
+    if(!character->GetPvPData().IsNull() &&
+        !character->LoadPvPData(db))
+    {
+        LOG_ERROR(libcomp::String("PvPData %1 could"
+            " not be initialized for account: %2\n")
+            .Arg(character->GetPvPData().GetUUID().ToString())
+            .Arg(state->GetAccountUID().ToString()));
+        return false;
     }
 
     // Item boxes and items
@@ -543,8 +814,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
 
         if(!itemBox.Get(db))
         {
-            LOG_ERROR(libcomp::String("ItemBox could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("ItemBox %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(itemBox.GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -569,7 +841,8 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
             if(!item.Get(db) || item->GetItemBox() != itemBox.GetUUID())
             {
                 LOG_WARNING(libcomp::String("Clearing invalid"
-                    " Item saved on ItemBox for account: %1\n")
+                    " Item %1 saved on ItemBox for account: %2\n")
+                    .Arg(item.GetUUID().ToString())
                     .Arg(state->GetAccountUID().ToString()));
                 itemBox->SetItems(i, NULLUUID);
                 openSlots.insert(i);
@@ -611,23 +884,28 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     }
 
     // Equipment
-    for(auto equip : character->GetEquippedItems())
+    for(size_t i = 0; i < 15; i++)
     {
+        auto equip = character->GetEquippedItems(i);
+
         if(equip.IsNull()) continue;
 
         //If we already have an object ID, it's already loaded
         if(state->GetObjectID(equip.GetUUID()) <= 0)
         {
-            if(!equip.Get(db))
+            if(equip.Get(db))
             {
-                LOG_ERROR(libcomp::String("Equipped Item could"
-                    " not be initialized for account: %1\n")
-                    .Arg(state->GetAccountUID().ToString()));
-                return false;
+                state->SetObjectID(equip->GetUUID(),
+                    server->GetNextObjectID());
             }
-
-            state->SetObjectID(equip->GetUUID(),
-                server->GetNextObjectID());
+            else
+            {
+                LOG_WARNING(libcomp::String("Clearing invalid Equipped"
+                    " Item %1 on character: %2\n")
+                    .Arg(equip.GetUUID().ToString())
+                    .Arg(character->GetUUID().ToString()));
+                character->SetEquippedItems(i, NULLUUID);
+            }
         }
     }
 
@@ -636,8 +914,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!expertise.IsNull() && !expertise.Get(db))
         {
-            LOG_ERROR(libcomp::String("Expertise could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("Expertise %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(expertise.GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -654,7 +933,8 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
                 !definitionManager->GetStatusData(effect->GetEffect()))
             {
                 LOG_WARNING(libcomp::String("Removing invalid"
-                    " character StatusEffect saved for account: %1\n")
+                    " character StatusEffect %1 saved for account: %2\n")
+                    .Arg(effect.GetUUID().ToString())
                     .Arg(state->GetAccountUID().ToString()));
                 character->RemoveStatusEffects((size_t)i);
             }
@@ -678,8 +958,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
 
         if(!box.Get(db))
         {
-            LOG_ERROR(libcomp::String("DemonBox could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("DemonBox %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(box.GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -690,8 +971,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
 
             if(!demon.Get(db) || !demon->LoadCoreStats(db))
             {
-                LOG_ERROR(libcomp::String("Demon or demon stats could"
-                    " not be initialized for account: %1\n")
+                LOG_ERROR(libcomp::String("Demon or demon stats for %1"
+                    " could not be initialized for account: %2\n")
+                    .Arg(demon.GetUUID().ToString())
                     .Arg(state->GetAccountUID().ToString()));
                 return false;
             }
@@ -710,8 +992,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
             {
                 if(!iSkill.Get(db))
                 {
-                    LOG_ERROR(libcomp::String("InheritedSkill could"
-                        " not be initialized for account: %1\n")
+                    LOG_ERROR(libcomp::String("InheritedSkill %1 could"
+                        " not be initialized for account: %2\n")
+                        .Arg(iSkill.GetUUID().ToString())
                         .Arg(state->GetAccountUID().ToString()));
                     return false;
                 }
@@ -733,7 +1016,8 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
                         !definitionManager->GetStatusData(effect->GetEffect()))
                     {
                         LOG_WARNING(libcomp::String("Removing invalid"
-                            " demon StatusEffect saved for account: %1\n")
+                            " demon StatusEffect %1 saved for account: %2\n")
+                            .Arg(effect.GetUUID().ToString())
                             .Arg(state->GetAccountUID().ToString()));
                         demon->RemoveStatusEffects((size_t)i);
                     }
@@ -749,7 +1033,8 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
                 if(!equipment.Get(db))
                 {
                     LOG_WARNING(libcomp::String("Removing invalid"
-                        " demon equipment saved for account: %1\n")
+                        " demon equipment %1 saved for account: %2\n")
+                        .Arg(equipment.GetUUID().ToString())
                         .Arg(state->GetAccountUID().ToString()));
                     demon->SetEquippedItems(i, NULLUUID);
                     continue;
@@ -789,8 +1074,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!hotbar.IsNull() && !hotbar.Get(db))
         {
-            LOG_ERROR(libcomp::String("Hotbar could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("Hotbar %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(hotbar.GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -801,8 +1087,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!qPair.second.IsNull() && !qPair.second.Get(db))
         {
-            LOG_ERROR(libcomp::String("Quest could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("Quest %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(qPair.second.GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -813,8 +1100,9 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!character->LoadDemonQuest(db))
         {
-            LOG_ERROR(libcomp::String("DemonQuest could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("DemonQuest %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(character->GetDemonQuest().GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
         }
@@ -845,10 +1133,31 @@ bool AccountManager::InitializeCharacter(libcomp::ObjectReference<
     {
         if(!character->LoadClan(db))
         {
-            LOG_ERROR(libcomp::String("Clan could"
-                " not be initialized for account: %1\n")
+            LOG_ERROR(libcomp::String("Clan %1 could"
+                " not be initialized for account: %2\n")
+                .Arg(character->GetClan().GetUUID().ToString())
                 .Arg(state->GetAccountUID().ToString()));
             return false;
+        }
+    }
+
+    // Event counters
+    for(auto counter : objects::EventCounter::LoadEventCounterListByCharacter(
+        db, character->GetUUID()))
+    {
+        // Ignore entries that are no longer valid
+        if(!counter->GetType()) continue;
+
+        if(state->EventCountersKeyExists(counter->GetType()))
+        {
+            LOG_ERROR(libcomp::String("Duplicate event counter encountered"
+                " on character %1: %2\n").Arg(counter->GetType())
+                .Arg(character->GetUUID().ToString()));
+            return false;
+        }
+        else
+        {
+            state->SetEventCounters(counter->GetType(), counter);
         }
     }
 
@@ -893,6 +1202,15 @@ bool AccountManager::InitializeNewCharacter(std::shared_ptr<
         character->SetCustomTitles(dCharacter->GetCustomTitles());
         character->SetCurrentTitle(dCharacter->GetCurrentTitle());
         character->SetTitlePrioritized(dCharacter->GetTitlePrioritized());
+
+        if(dCharacter->GetSupportDisplay())
+        {
+            // Only set support display flag if the account has GM privs
+            auto account = std::dynamic_pointer_cast<objects::Account>(
+                libcomp::PersistentObject::GetObjectByUUID(character
+                    ->GetAccount()));
+            character->SetSupportDisplay(account && account->GetUserLevel());
+        }
 
         // Set expertise defaults
         for(size_t i = 0; i < dCharacter->ExpertisesCount(); i++)
@@ -1326,4 +1644,280 @@ bool AccountManager::LogoutCharacter(channel::ClientState* state)
     // Save all records at once
     return mServer.lock()->GetWorldDatabase()
         ->ProcessChangeSet(dbChanges);
+}
+
+void AccountManager::WipeMember(tinyxml2::XMLElement *pElement,
+    const std::string& field)
+{
+    if(!pElement)
+    {
+        return;
+    }
+
+    tinyxml2::XMLElement *pChild = pElement->FirstChildElement("member");
+
+    while(pChild)
+    {
+        auto childField = pChild->Attribute("name");
+
+        if( childField && childField == field )
+        {
+            pElement->DeleteChild(pChild);
+
+            return;
+        }
+
+        // Move to the next child.
+        pChild = pChild->NextSiblingElement("member");
+    }
+}
+
+libcomp::String AccountManager::DumpAccount(channel::ClientState *state)
+{
+    auto db = mServer.lock()->GetWorldDatabase();
+
+    if(!state)
+    {
+        return {};
+    }
+
+    // DOM for the dump XML.
+    tinyxml2::XMLDocument doc;
+
+    tinyxml2::XMLElement *pRoot = doc.NewElement("objects");
+    doc.InsertEndChild(pRoot);
+
+    // First load and dump some account information.
+    auto account = libcomp::PersistentObject::LoadObjectByUUID<
+        objects::Account>(mServer.lock()->GetLobbyDatabase(),
+            state->GetAccountUID(), true);
+
+    if(!account || !account->SaveWithUUID(doc, *pRoot))
+    {
+        return {};
+    }
+
+    for(auto character : account->GetCharacters())
+    {
+        // There may be a few characters that are not there since this is
+        // an array and not a list.
+        if(!character)
+        {
+            continue;
+        }
+
+        auto cstate = new channel::ClientState;
+        cstate->SetAccountLogin(state->GetAccountLogin());
+
+        if(!InitializeCharacter(character, cstate))
+        {
+            return {};
+        }
+
+        if(!character->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+
+        auto pCharacterElement = pRoot->LastChildElement();
+
+        WipeMember(pCharacterElement, "Clan");
+        WipeMember(pCharacterElement, "DemonQuest");
+        WipeMember(pCharacterElement, "CultureData");
+        WipeMember(pCharacterElement, "PvPData");
+
+        if(!character->GetCoreStats()->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+
+        if(!character->GetProgress().IsNull() &&
+            !character->GetProgress()->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+
+        if(!character->GetFriendSettings().IsNull() &&
+            !character->GetFriendSettings()->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+        else if(!character->GetFriendSettings().IsNull())
+        {
+            WipeMember(pRoot->LastChildElement(), "Friends");
+        }
+
+        std::list<libcomp::ObjectReference<objects::ItemBox>> allBoxes;
+
+        for(auto itemBox : character->GetItemBoxes())
+        {
+            if(itemBox.IsNull())
+            {
+                continue;
+            }
+
+            if(!itemBox->SaveWithUUID(doc, *pRoot))
+            {
+                return {};
+            }
+
+            for(size_t i = 0; i < 50; i++)
+            {
+                auto item = itemBox->GetItems(i);
+
+                if(!item.IsNull() && !item->SaveWithUUID(doc, *pRoot))
+                {
+                    return {};
+                }
+            }
+        }
+
+        for(auto expertise : character->GetExpertises())
+        {
+            if(!expertise.IsNull() && !expertise->SaveWithUUID(doc, *pRoot))
+            {
+                return {};
+            }
+        }
+
+        auto box = character->GetCOMP();
+
+        if(!box.IsNull() && !box->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+        else if(!box.IsNull())
+        {
+            for(auto demon : box->GetDemons())
+            {
+                if(!demon.IsNull() && !demon->SaveWithUUID(doc, *pRoot))
+                {
+                    return {};
+                }
+                else if(!demon.IsNull())
+                {
+                    if(!demon->GetCoreStats()->SaveWithUUID(doc, *pRoot))
+                    {
+                        return {};
+                    }
+
+                    for(auto iSkill : demon->GetInheritedSkills())
+                    {
+                        if(!iSkill.IsNull() &&
+                            !iSkill->SaveWithUUID(doc, *pRoot))
+                        {
+                            return {};
+                        }
+                    }
+
+                    for(size_t i = 0; i < 4; i++)
+                    {
+                        auto equipment = demon->GetEquippedItems(i);
+
+                        if(!equipment.IsNull() &&
+                            !equipment->SaveWithUUID(doc, *pRoot))
+                        {
+                            return {};
+                        }
+                    }
+                }
+            }
+        }
+
+        for(auto hotbar : character->GetHotbars())
+        {
+            if(!hotbar.IsNull() && !hotbar->SaveWithUUID(doc, *pRoot))
+            {
+                return {};
+            }
+        }
+
+        for(auto qPair : character->GetQuests())
+        {
+            auto quest = qPair.second;
+
+            if(!quest.IsNull() && !quest->SaveWithUUID(doc, *pRoot))
+            {
+                return {};
+            }
+        }
+
+        delete cstate;
+    }
+
+    // World Data
+    auto worldData = state->GetAccountWorldData();
+
+    for(auto itemBox : worldData->GetItemBoxes())
+    {
+        if(itemBox.IsNull())
+        {
+            continue;
+        }
+
+        if(!itemBox->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+
+        for(size_t i = 0; i < 50; i++)
+        {
+            auto item = itemBox->GetItems(i);
+
+            if(!item.IsNull() && !item->SaveWithUUID(doc, *pRoot))
+            {
+                return {};
+            }
+        }
+    }
+
+    for(auto box : worldData->GetDemonBoxes())
+    {
+        if(!box.IsNull() && !box->SaveWithUUID(doc, *pRoot))
+        {
+            return {};
+        }
+        else if(!box.IsNull())
+        {
+            for(auto demon : box->GetDemons())
+            {
+                if(!demon.IsNull() && !demon->SaveWithUUID(doc, *pRoot))
+                {
+                    return {};
+                }
+                else if(!demon.IsNull())
+                {
+                    if(!demon->GetCoreStats()->SaveWithUUID(doc, *pRoot))
+                    {
+                        return {};
+                    }
+
+                    for(auto iSkill : demon->GetInheritedSkills())
+                    {
+                        if(!iSkill.IsNull() &&
+                            !iSkill->SaveWithUUID(doc, *pRoot))
+                        {
+                            return {};
+                        }
+                    }
+
+                    for(size_t i = 0; i < 4; i++)
+                    {
+                        auto equipment = demon->GetEquippedItems(i);
+
+                        if(!equipment.IsNull() &&
+                            !equipment->SaveWithUUID(doc, *pRoot))
+                        {
+                            return {};
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    tinyxml2::XMLPrinter printer;
+    doc.Print(&printer);
+
+    return printer.CStr();
 }

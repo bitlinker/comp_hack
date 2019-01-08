@@ -34,10 +34,13 @@
 namespace objects
 {
 class ActivatedAbility;
+class MiSkillData;
 }
 
 namespace channel
 {
+
+class Point;
 
 /**
  * Type of AI command used to specify what should happen to an AI controlled
@@ -55,6 +58,8 @@ enum AICommandType_t : uint8_t
  * Base class for all AI commands to be handled by the AIManager on
  * server ticks. Any command can be configured to delay before execution
  * so this doubles up as a request to "wait" when no other action is queued.
+ * This class is NOT thread safe but it should only be used by AIManager
+ * which is responsible for locking.
  */
 class AICommand
 {
@@ -88,26 +93,56 @@ public:
     void SetDelay(uint64_t delay);
 
     /**
-     * Check if the command has been marked as started
-     * @return true if the command has started, false if it
-     *  has not
+     * Get the delay ignore flag to determine if the entity should be
+     * put into the ignore state while delaying
+     * @return true if the ignore flag is set, false if it is not
      */
-    bool Started();
+    bool GetIgnoredDelay() const;
+
+    /**
+     * Set the delay ignore flag
+     * @param ignore true if the state should be set
+     */
+    void SetIgnoredDelay(bool ignore);
+
+    /**
+     * Get the server time set when the command started
+     * @return Server time in microseconds
+     */
+    uint64_t GetStartTime();
 
     /**
      * Set the command as having been started
      */
     void Start();
 
+    /**
+     * Get the ID of the entity targeted by the command
+     * @return Entity ID targeted by the command or -1 if none set
+     */
+    int32_t GetTargetEntityID() const;
+
+    /**
+     * Set the ID of the entity targeted by the command
+     * @param targetEntityID Entity ID targeted by the command or -1 if none
+     */
+    void SetTargetEntityID(int32_t targetEntityID);
+
 protected:
     /// AI command type
     AICommandType_t mType;
 
+    /// Command start time
+    uint64_t mStartTime;
+
     /// Pre-process delay time in microseconds
     uint64_t mDelay;
 
-    /// Indicates that the command has been started
-    bool mStarted;
+    /// Entity ID being targeted by the command (can be unset as -1)
+    int32_t mTargetEntityID;
+
+    /// If true the entity will be put into the ignore state during the delay
+    bool mIgnoredDelay;
 };
 
 /**
@@ -121,6 +156,17 @@ public:
      * Create a new move command
      */
     AIMoveCommand();
+    
+    /**
+     * Create a new move command with a targeted entity in mind
+     * @param targetEntityID ID of the entity being targeted by the movement
+     * @param minimumDistance Minimum distance required before the movement
+     *  is complete
+     * @param maximumDistance Maximum distance the move command will attempt
+     *  to move before quitting
+     */
+    AIMoveCommand(int32_t targetEntityID, float minimumDistance,
+        float maximumDistance = 0.f);
 
     /**
      * Clean up the move command
@@ -132,24 +178,29 @@ public:
      * point as the destination
      * @param pathing List of sequential points defining a movement path
      */
-    void SetPathing(const std::list<std::pair<float, float>>& pathing);
+    std::list<Point> GetPathing() const;
+
+    /**
+     * Set the pathing information for the move command, using the last
+     * point as the destination
+     * @param pathing List of sequential points defining a movement path
+     */
+    void SetPathing(const std::list<Point>& pathing);
 
     /**
      * Get the x and y coordinates of the point in the pathing that will
      * be moved to next
-     * @param x Output parameter for the next movement point's X coordinate
-     * @param y Output parameter for the next movement point's Y coordinate
+     * @param dest Output parameter for the next movement point's coordinates
      * @return true if a current destination exists, false if one does not
      */
-    bool GetCurrentDestination(float& x, float& y) const;
-    
+    bool GetCurrentDestination(Point& dest) const;
+
     /**
      * Get the x and y coordinates of the point at the end of the pathing
-     * @param x Output parameter for the final movement point's X coordinate
-     * @param y Output parameter for the final movement point's Y coordinate
+     * @param dest Output parameter for the next movement point's coordinates
      * @return true if the end destination exists, false if one does not
      */
-    bool GetEndDestination(float& x, float& y) const;
+    bool GetEndDestination(Point& dest) const;
 
     /**
      * Remove the current destination from the pathing and move on to the next
@@ -158,9 +209,33 @@ public:
      */
     bool SetNextDestination();
 
+    /**
+     * Get the min target distance required to consider the movement
+     * complete or max distance it can get away before stopping
+     * @param min If true, get the min, else get the max
+     * @return Min/max target distance
+     */
+    float GetTargetDistance(bool min) const;
+
+    /**
+     * Set the min target distance required to consider the movement
+     * complete or max distance it can get away before stopping
+     * @param distance Min/max target distance
+     * @param min If true, set the min, else set the max
+     */
+    void SetTargetDistance(float distance, bool min);
+
 private:
     /// List of sequential points defining a movement path
-    std::list<std::pair<float, float>> mPathing;
+    std::list<Point> mPathing;
+
+    /// Maximum distance the move command will attempt to move (minus pathing)
+    /// before quitting
+    float mMaximumTargetDistance;
+
+    /// Minimum distance the move command requires with the target before it
+    /// is considered complete
+    float mMinimumTargetDistance;
 };
 
 /**
@@ -171,10 +246,11 @@ class AIUseSkillCommand : public AICommand
 public:
     /**
      * Create a new use skill command for a skill not already activated
-     * @param skillID ID of the skill being used
-     * @param targetObjectID ID of the object being targeted by the skill
+     * @param skillData Pointer to the definition of the skill being used
+     * @param targetEntityID ID of the entity being targeted by the skill
      */
-    AIUseSkillCommand(uint32_t skillID, int64_t targetObjectID);
+    AIUseSkillCommand(const std::shared_ptr<objects::MiSkillData>& skillData,
+        int32_t targetEntityID);
 
     /**
      * Create a new use skill command for a skill that has already been activated
@@ -194,10 +270,10 @@ public:
     uint32_t GetSkillID() const;
 
     /**
-     * Get the ID of the object that was targeted by the skill
-     * @return ID of the object that was targeted by the skill
+     * Get the definition of the skill to use
+     * @return Definition fo the skill to use
      */
-    int64_t GetTargetObjectID() const;
+    std::shared_ptr<objects::MiSkillData> GetSkillData() const;
 
     /**
      * Set the ActivatedAbility pointer after the skill has been activated
@@ -213,11 +289,8 @@ public:
     std::shared_ptr<objects::ActivatedAbility> GetActivatedAbility() const;
 
 private:
-    /// ID of the skill being used
-    uint32_t mSkillID;
-
-    /// ID of the object being targeted by the skill
-    int64_t mTargetObjectID;
+    /// Definition of the skill being used
+    std::shared_ptr<objects::MiSkillData> mSkillData;
 
     /// Pointer to the ActivatedAbility of a skill to execute
     std::shared_ptr<objects::ActivatedAbility> mActivated;

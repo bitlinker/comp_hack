@@ -88,8 +88,14 @@ const uint8_t STATUS_CHARGING = 0x08;
 /// Entity is using the rest command
 const uint8_t STATUS_RESTING = 0x10;
 
+/// Entity is still affected by a skill's lockout time
+const uint8_t STATUS_LOCKOUT = 0x20;
+
 /// Entity is waiting (used by AI controlled entity)
-const uint8_t STATUS_WAITING = 0x20;
+const uint8_t STATUS_WAITING = 0x40;
+
+/// Entity is ignoring other entities and will not be seen by searching AI
+const uint8_t STATUS_IGNORE = 0x80;
 
 namespace libcomp
 {
@@ -122,7 +128,7 @@ public:
      * Create a new StatusEffectChange.
      */
     StatusEffectChange() : Type(0), Stack(0), IsReplace(false),
-        Duration(0)
+        IsConstant(false), Duration(0)
     {
     }
 
@@ -133,20 +139,26 @@ public:
      * @param isReplace Indicates if the status effect params should replace
      *  the effect if it already exists
      */
-    StatusEffectChange(uint32_t type, uint8_t stack, bool isReplace)
-        : Type(type), Stack(stack), IsReplace(isReplace), Duration(0)
+    StatusEffectChange(uint32_t type, int8_t stack, bool isReplace)
+        : Type(type), Stack(stack), IsReplace(isReplace), IsConstant(false),
+        Duration(0)
     {
     }
 
     /// Status effect type
     uint32_t Type;
 
-    /// Stack size of the effect
-    uint8_t Stack;
+    /// Stack size of the effect. If this is not a replace, the stack can be
+    /// negative to reduce the stack.
+    int8_t Stack;
 
     /// Indicates if the status effect params should replace the effect if it
     /// already exists
     bool IsReplace;
+
+    /// Indicates if the status effect is a constant effect that is granted
+    /// from a renewing source like a tokusei
+    bool IsConstant;
 
     /// Explicit duration (in MS) to be used for the status effect. Overrides
     /// any default values and allows NONE (constant) status effects to be
@@ -169,14 +181,6 @@ public:
      * Create a new active entity state
      */
     ActiveEntityState();
-
-    /**
-     * Explicitly defined copy constructor necessary due to removal
-     * of implicit constructor from non-copyable mutex member. This should
-     * never actually be used.
-     * @param other The other entity to copy
-     */
-    ActiveEntityState(const ActiveEntityState& other);
 
     /**
      * Get the adjusted correct table value associated to the entity.
@@ -205,16 +209,6 @@ public:
      */
     virtual uint8_t RecalculateStats(libcomp::DefinitionManager* definitionManager,
         std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
-
-    /**
-     * Recalculate the set of skills available ot the entity that are currently
-     * disabled.
-     * @param definitionManager Pointer to the DefinitionManager to use when
-     *  determining skill definitions
-     * @return true if the set of disabled skills has been updated, false if it
-     *  has not
-     */
-    virtual bool RecalcDisabledSkills(libcomp::DefinitionManager* definitionManager);
 
     /**
      * Check if the entity has the supplied skill learned and not currently
@@ -266,6 +260,12 @@ public:
     virtual std::shared_ptr<objects::EntityStats> GetCoreStats();
 
     /**
+     * Get the current level of the active entity.
+     * @return Active entity's current level
+     */
+    virtual int8_t GetLevel();
+
+    /**
      * Get the entity UUID associated to the entity this state represents.
      * @return Entity UUID or null UUID if not specified
      */
@@ -276,6 +276,13 @@ public:
      * @return World CID, 0 if not applicable
      */
     int32_t GetWorldCID();
+
+    /**
+     * Check if the entity is associated to a current event. Auto-only
+     * events do not apply here. This affects both types of player entities.
+     * @return true if an event exists, false if one does not
+     */
+    bool HasActiveEvent() const;
 
     /**
      * Get assigned entity as its EnemyBase representation or null
@@ -380,6 +387,13 @@ public:
     float GetMovementSpeed(bool altSpeed = false);
 
     /**
+     * Get the hitbox size for the current entity as defined by MiDevilData.
+     * The value returned is not converted to relative server units.
+     * @return Hitbox size
+     */
+    uint32_t GetHitboxSize() const;
+
+    /**
      * Update the entity's current position and rotation values based
      * upon the source/destination ticks and the current time.  If now
      * matches the last refresh time, no work is done.
@@ -388,7 +402,21 @@ public:
     void RefreshCurrentPosition(uint64_t now);
 
     /**
-     * Expire any status times that have passed
+     * Update the entity's current pending combatants, removing any that
+     * are no longer valid and adding the supplied values if the time supplied
+     * is no later than the simultaneous hit window (100ms) of the earliest
+     * value already set. Once a value is added here, the corresponding pending
+     * skill can be queued to execute. If the value is not added, the skill
+     * should be retried again later.
+     * @param entityID ID of the entity that is attacking
+     * @param executeTime Pending execution time of the skill if it were
+     *  allowed to hit
+     * @return true if the skill hit was added, false if it was not
+     */
+    bool UpdatePendingCombatants(int32_t entityID, uint64_t executeTime);
+
+    /**
+     * Expire any status times that have passed (including skill cooldowns)
      * @param now Current timestamp of the server
      */
     void ExpireStatusTimes(uint64_t now);
@@ -407,34 +435,25 @@ public:
     void SetAIState(const std::shared_ptr<channel::AIState>& aiState);
 
     /**
-     * Retrieves a timestamp associated to an enemy specific action.
-     * @param action Name of the action to retrieve information from
-     * @return Timestamp associated to the action or 0 if not found
-     */
-    uint64_t GetActionTime(const libcomp::String& action);
-
-    /**
-     * Stores a timestamp associated to an enemy specific action.
-     * @param action Name of the action to store
-     * @param time Timestamp of the specified action
-     */
-    void SetActionTime(const libcomp::String& action, uint64_t time);
-
-    /**
-     * Update the entity's current knockback value based on the last
-     * ticks associated to the value and the current time. If the value
+     * Get or update the entity's current knockback value based on the last
+     * ticks associated to the value and the supplied time. If the value
      * reaches or exceeds the maximum knockback resistance, the max
      * value will be used and the last update tick will be cleared.
-     * @param now Current timestamp of the server
+     * @param time Timestamp from the server
      * @param recoveryBoost Recovery rate increase percentage
+     * @param setValue Optional parameter to disable setting the value
+     *  and only retrun the estimated value
+     * @return Updated knockback value
      */
-    void RefreshKnockback(uint64_t now, float recoveryBoost);
+    float RefreshKnockback(uint64_t time, float recoveryBoost,
+        bool setValue = true);
 
     /**
      * Refresh and then reduce the entity's knockback value. If the value
      * goes under zero, it will be set to zero.
      * @param now Current timestamp of the server
-     * @param decrease Value to decrease the knockback value by
+     * @param decrease Value to decrease the knockback value by or -1.f
+     *  to indicate a full decrease
      * @param recoveryBoost Recovery rate increase percentage
      */
     float UpdateKnockback(uint64_t now, float decrease,
@@ -577,7 +596,8 @@ public:
 
     /**
      * Cancel existing status effects via cancel event flags. The expire
-     * event will be queued up for processing on the next server tick.
+     * event will be queued up for processing on the next server tick unless
+     * effects are not active.
      * @param cancelFlags Flags indicating conditions that can cause status
      *  effects to be cancelled. The set of valid status conditions are listed
      *  as constants on ActiveEntityState
@@ -586,6 +606,21 @@ public:
      */
     std::set<uint32_t> CancelStatusEffects(uint8_t cancelFlags,
         const std::set<uint32_t>& keepEffects = {});
+
+    /**
+     * Cancel existing status effects via cancel event flags. The expire
+     * event will be queued up for processing on the next server tick unless
+     * effects are not active.
+     * @param cancelFlags Flags indicating conditions that can cause status
+     *  effects to be cancelled. The set of valid status conditions are listed
+     *  as constants on ActiveEntityState
+     * @param cancelled Output parameter stating whether any effects were
+     *  cancelled, independent of queuing
+     * @param keepEffects Optional set of status effects to keep
+     * @return Set of cancelled status effect types that will not be queued
+     */
+    std::set<uint32_t> CancelStatusEffects(uint8_t cancelFlags,
+        bool& cancelled, const std::set<uint32_t>& keepEffects = {});
 
     /**
      * Activate or deactivate the entity's status effect states. By activating
@@ -627,6 +662,10 @@ public:
         int32_t& tUpkeep, std::set<uint32_t>& added, std::set<uint32_t>& updated,
         std::set<uint32_t>& removed);
 
+    /**
+     * Clear or reset any active skill upkeep costs timer
+     * @return true if an upkeep is active, false if there is no active upkeep
+     */
     bool ResetUpkeep();
 
     /**
@@ -680,16 +719,18 @@ public:
 
     /**
      * Determine if the supplied NRA type/index effect shield is active on the
-     * entity and decrease the effect by one if it is.
+     * entity and optionally decrease the effect by one if it is.
      * @param nraIdx Correct table index for affinity NRA
      *  1) Null
      *  2) Reflect
      *  3) Absorb
      *  Defines exist in the Constants header for each of these.
      * @param type Correct table type of the affinity to retrieve
+     * @param reduce If true, the first matching NRA shield will be reduced
+     *  by one
      * @return true if a shield effect existed, false if one did not
      */
-    bool PopNRAShield(uint8_t nraIdx, CorrectTbl type);
+    bool GetNRAShield(uint8_t nraIdx, CorrectTbl type, bool reduce);
 
     /**
      * Get the next activated ability ID from 0 to 127.
@@ -890,10 +931,27 @@ protected:
      * Get the set of skill IDs granted by effective tokusei.
      * @param definitionManager Pointer to the definition manager to use
      *  for tokusei definitions
-     * @result Set of skill IDs granted by effective tokusei
+     * @return Set of skill IDs granted by effective tokusei
      */
     std::set<uint32_t> GetEffectiveTokuseiSkills(
         libcomp::DefinitionManager* definitionManager);
+
+    /**
+     * Compare and set the entity's current stats and also keep track of if
+     * a change occurred.
+     * @param stats Map of correct table IDs to calculated stats to set on the
+     *  entity
+     * @param dependentBase If true, only dependent stat base values will be
+     *  checked and set. If false, final stats will be checked and set.
+     * @param extraHP Extra HP amount to add to the base MaxHP. Only applies
+     *  when not applying dependent base stats. Used by enemies.
+     * @return 1 if the calculation resulted in a change to the stats that should
+     *  be sent to the client, 2 if one of the changes should be communicated to
+     *  the world (for party members etc), 0 if no change resulted from the
+     *  recalculation
+     */
+    uint8_t CompareAndResetStats(libcomp::EnumMap<CorrectTbl, int16_t>& stats,
+        bool dependentBase, int32_t extraHP = 0);
 
     /**
      * Compare and set the entity's current stats and also keep track of if
@@ -973,9 +1031,6 @@ protected:
     /// Next available activated ability ID
     int8_t mNextActivatedAbilityID;
 
-    /// Map of timestamps associated to AI specific actions
-    std::unordered_map<std::string, uint64_t> mActionTimes;
-
     /// Pointer to the AI state information bound to the entity
     std::shared_ptr<AIState> mAIState;
 
@@ -1004,7 +1059,7 @@ public:
      * Get the active entity
      * @return Pointer to the active entity
      */
-    std::shared_ptr<T> GetEntity()
+    std::shared_ptr<T> GetEntity() const
     {
         return mEntity;
     }
@@ -1018,27 +1073,16 @@ public:
     void SetEntity(const std::shared_ptr<T>& entity,
         const std::shared_ptr<objects::MiDevilData>& devilData);
 
-    virtual const libobjgen::UUID GetEntityUUID();
-
-    virtual std::shared_ptr<objects::EnemyBase> GetEnemyBase() const
-    {
-        return nullptr;
-    }
-
     virtual std::shared_ptr<objects::EntityStats> GetCoreStats()
     {
         return mEntity ? mEntity->GetCoreStats().Get() : nullptr;
     }
 
-    virtual uint8_t RecalculateStats(libcomp::DefinitionManager* definitionManager,
-        std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
-
-    virtual std::set<uint32_t> GetAllSkills(libcomp::DefinitionManager* definitionManager,
-        bool includeTokusei);
-
-    virtual uint8_t GetLNCType();
-
-    virtual int8_t GetGender();
+    virtual int8_t GetLevel()
+    {
+        auto cs = GetCoreStats();
+        return cs ? cs->GetLevel() : 0;
+    }
 
     virtual bool Ready(bool ignoreDisplayState = false)
     {

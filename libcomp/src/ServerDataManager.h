@@ -28,7 +28,9 @@
 #define LIBCOMP_SRC_SERVERDATAMANAGER_H
 
 // Standard C++14 Includes
+#include <PushIgnore.h>
 #include <gsl/gsl>
+#include <PopIgnore.h>
 
 // libcomp Includes
 #include "CString.h"
@@ -46,6 +48,8 @@
 
 namespace objects
 {
+class Action;
+class AILogicGroup;
 class DemonPresent;
 class DemonQuestReward;
 class DropSet;
@@ -55,6 +59,7 @@ class ServerZone;
 class ServerZoneInstance;
 class ServerZoneInstanceVariant;
 class ServerZonePartial;
+class ServerZoneTrigger;
 }
 
 namespace libcomp
@@ -134,12 +139,39 @@ public:
     const std::set<uint32_t> GetAllZoneInstanceIDs();
 
     /**
+     * Check if the supplied zone ID and dynamicMap ID exist in a specific
+     * instance definition
+     * @param instanceID Definition ID of a zone instance
+     * @param zoneID Zone ID to check
+     * @param dynamicMapID Dynamic Map ID to check
+     * @return true if it exists, false if it does not
+     */
+    bool ExistsInInstance(uint32_t instanceID, uint32_t zoneID,
+        uint32_t dynamicMapID);
+
+    /**
      * Get a server zone instance variant by definition ID
      * @param id Definition ID of a zone instance variant to retrieve
      * @return Pointer to the server zone instance variant matching the specified id
      */
     const std::shared_ptr<objects::ServerZoneInstanceVariant>
         GetZoneInstanceVariantData(uint32_t id);
+
+    /**
+     * Get all standard PvP variant IDs associated to a specific PvP type
+     * @param type PvP type
+     * @return Set of all variant IDs associated to the type
+     */
+    std::set<uint32_t> GetStandardPvPVariantIDs(uint8_t type) const;
+
+    /**
+     * Verify if the supplied instance is valid for being a PvP variant
+     * @param instanceID ID of the instance to check
+     * @param definitionManager Pointer to the definition manager to use
+     *  when checking information for the instance zones
+     */
+    bool VerifyPvPInstance(uint32_t instanceID,
+        DefinitionManager* definitionManager);
 
     /**
      * Get a server zone partial by definition ID
@@ -168,6 +200,13 @@ public:
      * @return List of COMP shop definition IDs
      */
     std::list<uint32_t> GetCompShopIDs() const;
+
+    /**
+     * Get an AI logic group by definition ID
+     * @param id Definition ID of an AI logic group
+     * @return Pointer to the AI logic group matching the specified id
+     */
+    const std::shared_ptr<objects::AILogicGroup> GetAILogicGroup(uint16_t id);
 
     /**
      * Get a demon present entry by definition ID
@@ -237,6 +276,22 @@ public:
     bool ApplyZonePartial(std::shared_ptr<objects::ServerZone> zone,
         uint32_t partialID);
 
+    /**
+     * Apply modifications from a zone partial to an instanced zone definition.
+     * Unique IDs and NPCs/objects in the same spot that already exist on the
+     * definition will be replaced by the partial definition, including
+     * deletes. The supplied zone being a copy must be checked before this
+     * point.
+     * @param zone Pointer to a zone definition to modify
+     * @param partial Pointer to the zone partial definition to apply to the
+     *  zone
+     * @param positionReplace If true non-keyed objects at the same position
+     *  will be replaced as we go. If false they will all be included.
+     */
+    static void ApplyZonePartial(std::shared_ptr<objects::ServerZone> zone,
+        const std::shared_ptr<objects::ServerZonePartial>& partial,
+        bool positionReplace);
+
 private:
     /**
      * Get a server object by ID from the supplied map of the specified
@@ -265,12 +320,14 @@ private:
      * @param definitionManager Pointer to the definition manager which
      *  will be loaded with any server side definitions
      * @param recursive If true sub-directories will be loaded from as well
+     * @param fileOrPath If true and no files are found in the path, the path
+     *  will be treated like a file path by appending ".xml"
      * @return true on success, false on failure
      */
     template <class T>
     bool LoadObjects(gsl::not_null<DataStore*> pDataStore,
         const libcomp::String& datastorePath,
-        DefinitionManager* definitionManager, bool recursive)
+        DefinitionManager* definitionManager, bool recursive, bool fileOrPath)
     {
         std::list<libcomp::String> files;
         std::list<libcomp::String> dirs;
@@ -279,16 +336,33 @@ private:
         (void)pDataStore->GetListing(datastorePath, files, dirs, symLinks,
             recursive, true);
 
+        bool loaded = false;
         for(auto path : files)
         {
-            if(path.Matches("^.*\\.xml$") && !LoadObjectsFromFile<T>(
-                pDataStore, path, definitionManager))
+            if(path.Matches("^.*\\.xml$"))
             {
-                return false;
+                if(LoadObjectsFromFile<T>(pDataStore, path,
+                    definitionManager))
+                {
+                    loaded = true;
+                }
+                else
+                {
+                    return false;
+                }
             }
         }
 
-        return true;
+        if(!loaded && fileOrPath)
+        {
+            // Attempt to load single file from modified path
+            return LoadObjectsFromFile<T>(pDataStore, datastorePath + ".xml",
+                definitionManager);
+        }
+        else
+        {
+            return true;
+        }
     }
 
     /**
@@ -373,6 +447,28 @@ private:
      */
     bool LoadScript(const libcomp::String& path, const libcomp::String& source);
 
+    /**
+     * Check for any issues in an action set and report any found in the logs
+     * @param actions List of actions to validate
+     * @param source Text descriptor of where the action is from
+     * @param autoContext If true, player only actions should be handled
+     *  differently
+     * @param inEvent Specifies that the actions are a direct subset of an
+     *  event (ex: EventPerformActions)
+     * @return false if any critical errors were encountered
+     */
+    bool ValidateActions(const std::list<
+        std::shared_ptr<objects::Action>>& actions,
+        const libcomp::String& source, bool autoContext, bool inEvent = false);
+
+    /**
+     * Check if the supplied trigger starts in an auto-only context for actions
+     * @param trigger Pointer to the trigger definition
+     * @return true if the trigger is an auto-only type, false if it is not
+     */
+    bool TriggerIsAutoContext(
+        const std::shared_ptr<objects::ServerZoneTrigger>& trigger);
+
     /// Map of server zone defintions by zone definition and dynamic map ID
     std::unordered_map<uint32_t, std::unordered_map<uint32_t,
         std::shared_ptr<objects::ServerZone>>> mZoneData;
@@ -387,6 +483,8 @@ private:
     /// Map of server zone instance variant defintions by definition ID
     std::unordered_map<uint32_t, std::shared_ptr<
         objects::ServerZoneInstanceVariant>> mZoneInstanceVariantData;
+
+    std::unordered_map<uint8_t, std::set<uint32_t>> mStandardPvPVariantIDs;
 
     /// Map of server zone partial defintions by definition ID
     std::unordered_map<uint32_t, std::shared_ptr<
@@ -406,6 +504,10 @@ private:
 
     /// List of all COMP shop definition IDs
     std::list<uint32_t> mCompShopIDs;
+
+    /// Map of AI logic groups by definition ID
+    std::unordered_map<uint16_t,
+        std::shared_ptr<objects::AILogicGroup>> mAILogicGroups;
 
     /// Map of demon present entries by definition ID
     std::unordered_map<uint32_t,

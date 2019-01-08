@@ -29,6 +29,10 @@
 // libcomp Includes
 #include <ScriptEngine.h>
 
+// objects Includes
+#include <MiDevilData.h>
+#include <MiNPCBasicData.h>
+
 using namespace channel;
 
 namespace libcomp
@@ -41,11 +45,11 @@ namespace libcomp
             Using<ActiveEntityState>();
             Using<objects::Enemy>();
 
-            Sqrat::DerivedClass<EnemyState,
-                ActiveEntityState> binding(mVM, "EnemyState");
+            Sqrat::DerivedClass<EnemyState, ActiveEntityState,
+                Sqrat::NoConstructor<EnemyState>> binding(mVM, "EnemyState");
             binding
                 .Func<std::shared_ptr<objects::Enemy>
-                (EnemyState::*)()>(
+                (EnemyState::*)() const>(
                     "GetEntity", &EnemyState::GetEntity);
 
             Bind<EnemyState>("EnemyState", binding);
@@ -76,4 +80,55 @@ void EnemyState::SetTalkPoints(int32_t entityID,
 {
     std::lock_guard<std::mutex> lock(mLock);
     mTalkPoints[entityID] = points;
+}
+
+std::shared_ptr<objects::EnemyBase> EnemyState::GetEnemyBase() const
+{
+    return GetEntity();
+}
+
+uint8_t EnemyState::RecalculateStats(
+    libcomp::DefinitionManager* definitionManager,
+    std::shared_ptr<objects::CalculatedEntityState> calcState)
+{
+    std::lock_guard<std::mutex> lock(mLock);
+
+    auto entity = GetEntity();
+    if(!entity)
+    {
+        return true;
+    }
+
+    return RecalculateEnemyStats(definitionManager, calcState);
+}
+
+std::set<uint32_t> EnemyState::GetAllSkills(
+    libcomp::DefinitionManager* definitionManager, bool includeTokusei)
+{
+    return GetAllEnemySkills(definitionManager, includeTokusei);
+}
+
+uint8_t EnemyState::GetLNCType()
+{
+    int16_t lncPoints = 0;
+
+    auto entity = GetEntity();
+    auto demonData = GetDevilData();
+    if(entity && demonData)
+    {
+        lncPoints = demonData->GetBasic()->GetLNC();
+    }
+
+    return CalculateLNCType(lncPoints);
+}
+
+int8_t EnemyState::GetGender()
+{
+    auto demonData = GetDevilData();
+    if(demonData)
+    {
+        return (int8_t)demonData->GetBasic()->GetGender();
+    }
+
+    return 2;   // None
 }

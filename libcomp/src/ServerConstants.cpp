@@ -92,6 +92,14 @@ bool ServerConstants::Initialize(const String& filePath)
         sConstants.ELEMENTAL_3_AEROS);
     success &= LoadInteger(constants["ELEMENTAL_4_ERTHYS"],
         sConstants.ELEMENTAL_4_ERTHYS);
+    success &= LoadInteger(constants["MITAMA_1_ARAMITAMA"],
+        sConstants.MITAMA_1_ARAMITAMA);
+    success &= LoadInteger(constants["MITAMA_2_NIGIMITAMA"],
+        sConstants.MITAMA_2_NIGIMITAMA);
+    success &= LoadInteger(constants["MITAMA_3_KUSHIMITAMA"],
+        sConstants.MITAMA_3_KUSHIMITAMA);
+    success &= LoadInteger(constants["MITAMA_4_SAKIMITAMA"],
+        sConstants.MITAMA_4_SAKIMITAMA);
 
     // Load item constants
     success &= LoadInteger(constants["ITEM_MACCA"],
@@ -132,14 +140,14 @@ bool ServerConstants::Initialize(const String& filePath)
         sConstants.MENU_TRIFUSION);
     success &= LoadInteger(constants["MENU_TRIFUSION_KZ"],
         sConstants.MENU_TRIFUSION_KZ);
+    success &= LoadInteger(constants["MENU_UB_RANKING"],
+        sConstants.MENU_UB_RANKING);
     success &= LoadInteger(constants["MENU_WEB_GAME"],
         sConstants.MENU_WEB_GAME);
 
     // Load skill constants
     success &= LoadInteger(constants["SKILL_ABS_DAMAGE"],
         sConstants.SKILL_ABS_DAMAGE);
-    success &= LoadInteger(constants["SKILL_BOSS_SPECIAL"],
-        sConstants.SKILL_BOSS_SPECIAL);
     success &= LoadInteger(constants["SKILL_CAMEO"],
         sConstants.SKILL_CAMEO);
     success &= LoadInteger(constants["SKILL_CLAN_FORM"],
@@ -274,14 +282,18 @@ bool ServerConstants::Initialize(const String& filePath)
         sConstants.STATUS_CLOAK);
     success &= LoadInteger(constants["STATUS_DEATH"],
         sConstants.STATUS_DEATH);
+    success &= LoadInteger(constants["STATUS_DEMON_ONLY"],
+        sConstants.STATUS_DEMON_ONLY);
     success &= LoadInteger(constants["STATUS_DEMON_QUEST_ACTIVE"],
         sConstants.STATUS_DEMON_QUEST_ACTIVE);
-    success &= LoadInteger(constants["STATUS_HIDDEN"],
-        sConstants.STATUS_HIDDEN);
+    success &= LoadInteger(constants["STATUS_DIGITALIZE_COOLDOWN"],
+        sConstants.STATUS_DIGITALIZE_COOLDOWN);
     success &= LoadInteger(constants["STATUS_MOUNT"],
         sConstants.STATUS_MOUNT);
     success &= LoadInteger(constants["STATUS_MOUNT_SUPER"],
         sConstants.STATUS_MOUNT_SUPER);
+    success &= LoadInteger(constants["STATUS_REUNION_XP_SAVE"],
+        sConstants.STATUS_REUNION_XP_SAVE);
     success &= LoadInteger(constants["STATUS_SLEEP"],
         sConstants.STATUS_SLEEP);
     success &= LoadInteger(constants["STATUS_SUMMON_SYNC_1"],
@@ -294,6 +306,8 @@ bool ServerConstants::Initialize(const String& filePath)
     // Load (detached) tokusei constants
     success &= LoadInteger(constants["TOKUSEI_BIKE_BOOST"],
         sConstants.TOKUSEI_BIKE_BOOST);
+    success &= LoadInteger(constants["TOKUSEI_MAGIC_CONTROL_COST"],
+        sConstants.TOKUSEI_MAGIC_CONTROL_COST);
 
     // Load valuable constants
     success &= LoadInteger(constants["VALUABLE_DEVIL_BOOK_V1"],
@@ -302,18 +316,22 @@ bool ServerConstants::Initialize(const String& filePath)
         sConstants.VALUABLE_DEVIL_BOOK_V2);
     success &= LoadInteger(constants["VALUABLE_DEMON_FORCE"],
         sConstants.VALUABLE_DEMON_FORCE);
+    success &= LoadInteger(constants["VALUABLE_DIGITALIZE_LV1"],
+        sConstants.VALUABLE_DIGITALIZE_LV1);
+    success &= LoadInteger(constants["VALUABLE_DIGITALIZE_LV2"],
+        sConstants.VALUABLE_DIGITALIZE_LV2);
     success &= LoadInteger(constants["VALUABLE_FUSION_GAUGE"],
         sConstants.VALUABLE_FUSION_GAUGE);
     success &= LoadInteger(constants["VALUABLE_MATERIAL_TANK"],
         sConstants.VALUABLE_MATERIAL_TANK);
 
-    // Load zone constants
+    // Load other constants
+    success &= LoadInteger(constants["MITAMA_SET_BOOST"],
+        sConstants.MITAMA_SET_BOOST);
     success &= LoadInteger(constants["ZONE_DEFAULT"],
         sConstants.ZONE_DEFAULT);
 
     String listStr;
-    success &= LoadString(constants["STATUS_COMP_TUNING"], listStr) &&
-        ToIntegerSet(sConstants.STATUS_COMP_TUNING, listStr.Split(","));
     success &= LoadString(constants["SKILL_TRAESTO_ARCADIA"], listStr) &&
         ToIntegerArray(sConstants.SKILL_TRAESTO_ARCADIA, listStr.Split(","));
     success &= LoadString(constants["SKILL_TRAESTO_DSHINJUKU"], listStr) &&
@@ -324,6 +342,11 @@ bool ServerConstants::Initialize(const String& filePath)
         ToIntegerArray(sConstants.SKILL_TRAESTO_NAKANO_BDOMAIN, listStr.Split(","));
     success &= LoadString(constants["SKILL_TRAESTO_SOUHONZAN"], listStr) &&
         ToIntegerArray(sConstants.SKILL_TRAESTO_SOUHONZAN, listStr.Split(","));
+
+    success &= LoadString(constants["STATUS_COMP_TUNING"], listStr) &&
+        ToIntegerSet(sConstants.STATUS_COMP_TUNING, listStr.Split(","));
+    success &= LoadString(constants["STATUS_DIGITALIZE"], listStr) &&
+        ToIntegerArray(sConstants.STATUS_DIGITALIZE, listStr.Split(","));
 
     if(!success)
     {
@@ -929,6 +952,72 @@ bool ServerConstants::Initialize(const String& filePath)
         return false;
     }
 
+    complexIter = complexConstants.find("REUNION_EXTRACT_ITEMS");
+    if(complexIter != complexConstants.end())
+    {
+        std::list<String> strList;
+        if(!LoadStringList(complexIter->second, strList))
+        {
+            LOG_ERROR("Failed to load REUNION_EXTRACT_ITEMS\n");
+            return false;
+        }
+        else
+        {
+            for(auto elem : strList)
+            {
+                uint32_t id = 0;
+                if(LoadInteger(elem.C(), id))
+                {
+                    sConstants.REUNION_EXTRACT_ITEMS.push_back(id);
+                }
+                else
+                {
+                    LOG_ERROR("Failed to load an entry in"
+                        " REUNION_EXTRACT_ITEMS\n");
+                    return false;
+                }
+            }
+        }
+    }
+    else
+    {
+        LOG_ERROR("REUNION_EXTRACT_ITEMS not found\n");
+        return false;
+    }
+
+    complexIter = complexConstants.find("ROLLBACK_PG_ITEMS");
+    if(complexIter != complexConstants.end())
+    {
+        std::list<String> strList;
+        if(!LoadStringList(complexIter->second, strList))
+        {
+            LOG_ERROR("Failed to load ROLLBACK_PG_ITEMS\n");
+            return false;
+        }
+        else
+        {
+            for(auto elem : strList)
+            {
+                uint32_t id = 0;
+                if(LoadInteger(elem.C(), id))
+                {
+                    sConstants.ROLLBACK_PG_ITEMS.push_back(id);
+                }
+                else
+                {
+                    LOG_ERROR("Failed to load an entry in"
+                        " ROLLBACK_PG_ITEMS\n");
+                    return false;
+                }
+            }
+        }
+    }
+    else
+    {
+        LOG_ERROR("ROLLBACK_PG_ITEMS not found\n");
+        return false;
+    }
+
     complexIter = complexConstants.find("SPIRIT_FUSION_BOOST");
     if(complexIter != complexConstants.end())
     {
@@ -966,7 +1055,7 @@ bool ServerConstants::Initialize(const String& filePath)
         LOG_ERROR("SPIRIT_FUSION_BOOST not found\n");
         return false;
     }
-    
+
     complexIter = complexConstants.find("SYNTH_SKILLS");
     if(complexIter != complexConstants.end())
     {
@@ -1008,6 +1097,72 @@ bool ServerConstants::Initialize(const String& filePath)
     else
     {
         LOG_ERROR("SYNTH_SKILLS not found\n");
+        return false;
+    }
+
+    complexIter = complexConstants.find("TEAM_STATUS_COOLDOWN");
+    if(complexIter != complexConstants.end())
+    {
+        std::unordered_map<std::string, std::string> map;
+        if(!LoadKeyValueStrings(complexIter->second, map) ||
+            !LoadIntegerMap(map, sConstants.TEAM_STATUS_COOLDOWN))
+        {
+            LOG_ERROR("Failed to load TEAM_STATUS_COOLDOWN\n");
+            return false;
+        }
+    }
+    else
+    {
+        LOG_ERROR("TEAM_STATUS_COOLDOWN not found\n");
+        return false;
+    }
+
+    complexIter = complexConstants.find("TEAM_VALUABLES");
+    if(complexIter != complexConstants.end())
+    {
+        std::unordered_map<std::string, std::string> map;
+        if(!LoadKeyValueStrings(complexIter->second, map))
+        {
+            LOG_ERROR("Failed to load TEAM_VALUABLES\n");
+            return false;
+        }
+
+        for(auto pair : map)
+        {
+            int8_t key;
+            if(!LoadInteger(pair.first, key))
+            {
+                LOG_ERROR("Failed to load TEAM_VALUABLES key\n");
+                return false;
+            }
+            else if(sConstants.TEAM_VALUABLES.find(key) !=
+                sConstants.TEAM_VALUABLES.end())
+            {
+                LOG_ERROR("Duplicate TEAM_VALUABLES key encountered\n");
+                return false;
+            }
+            else
+            {
+                if(!pair.second.empty())
+                {
+                    for(uint16_t p : ToIntegerRange<uint16_t>(pair.second,
+                        success))
+                    {
+                        sConstants.TEAM_VALUABLES[key].push_back(p);
+                    }
+
+                    if(!success)
+                    {
+                        LOG_ERROR("Failed to load an element in TEAM_VALUABLES\n");
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        LOG_ERROR("TEAM_VALUABLES not found\n");
         return false;
     }
 
@@ -1099,13 +1254,13 @@ bool ServerConstants::Initialize(const String& filePath)
         return false;
     }
 
-    complexIter = complexConstants.find("VA_ADD_ITEM");
+    complexIter = complexConstants.find("VA_ADD_ITEMS");
     if(complexIter != complexConstants.end())
     {
         std::list<String> strList;
         if(!LoadStringList(complexIter->second, strList))
         {
-            LOG_ERROR("Failed to load VA_ADD_ITEM\n");
+            LOG_ERROR("Failed to load VA_ADD_ITEMS\n");
             return false;
         }
         else
@@ -1115,12 +1270,12 @@ bool ServerConstants::Initialize(const String& filePath)
                 uint32_t entry = 0;
                 if(LoadInteger(elemStr.C(), entry))
                 {
-                    sConstants.VA_ADD_ITEM.insert(entry);
+                    sConstants.VA_ADD_ITEMS.insert(entry);
                 }
                 else
                 {
                     LOG_ERROR("Failed to load an element in"
-                        " VA_ADD_ITEM\n");
+                        " VA_ADD_ITEMS\n");
                     return false;
                 }
             }
@@ -1128,9 +1283,127 @@ bool ServerConstants::Initialize(const String& filePath)
     }
     else
     {
-        LOG_ERROR("VA_ADD_ITEM not found\n");
+        LOG_ERROR("VA_ADD_ITEMS not found\n");
         return false;
     }
+
+    //
+    // GM Command Levels
+    //
+    success &= LoadInteger(constants["GM_CMD_LVL_ADD_CP"],
+        sConstants.GM_CMD_LVL_ADD_CP);
+    success &= LoadInteger(constants["GM_CMD_LVL_ANNOUNCE"],
+        sConstants.GM_CMD_LVL_ANNOUNCE);
+    success &= LoadInteger(constants["GM_CMD_LVL_BAN"],
+        sConstants.GM_CMD_LVL_BAN);
+    success &= LoadInteger(constants["GM_CMD_LVL_BATTLE_POINTS"],
+        sConstants.GM_CMD_LVL_BATTLE_POINTS);
+    success &= LoadInteger(constants["GM_CMD_LVL_BETHEL"],
+        sConstants.GM_CMD_LVL_BETHEL);
+    success &= LoadInteger(constants["GM_CMD_LVL_COIN"],
+        sConstants.GM_CMD_LVL_COIN);
+    success &= LoadInteger(constants["GM_CMD_LVL_CONTRACT"],
+        sConstants.GM_CMD_LVL_CONTRACT);
+    success &= LoadInteger(constants["GM_CMD_LVL_COUNTER"],
+        sConstants.GM_CMD_LVL_COUNTER);
+    success &= LoadInteger(constants["GM_CMD_LVL_COWRIE"],
+        sConstants.GM_CMD_LVL_COWRIE);
+    success &= LoadInteger(constants["GM_CMD_LVL_CRASH"],
+        sConstants.GM_CMD_LVL_CRASH);
+    success &= LoadInteger(constants["GM_CMD_LVL_DIGITALIZE_POINTS"],
+        sConstants.GM_CMD_LVL_DIGITALIZE_POINTS);
+    success &= LoadInteger(constants["GM_CMD_LVL_EFFECT"],
+        sConstants.GM_CMD_LVL_EFFECT);
+    success &= LoadInteger(constants["GM_CMD_LVL_ENCHANT"],
+        sConstants.GM_CMD_LVL_ENCHANT);
+    success &= LoadInteger(constants["GM_CMD_LVL_ENEMY"],
+        sConstants.GM_CMD_LVL_ENEMY);
+    success &= LoadInteger(constants["GM_CMD_LVL_EVENT"],
+        sConstants.GM_CMD_LVL_EVENT);
+    success &= LoadInteger(constants["GM_CMD_LVL_EXPERTISE_EXTEND"],
+        sConstants.GM_CMD_LVL_EXPERTISE_EXTEND);
+    success &= LoadInteger(constants["GM_CMD_LVL_EXPERTISE_SET"],
+        sConstants.GM_CMD_LVL_EXPERTISE_SET);
+    success &= LoadInteger(constants["GM_CMD_LVL_FAMILIARITY"],
+        sConstants.GM_CMD_LVL_FAMILIARITY);
+    success &= LoadInteger(constants["GM_CMD_LVL_FLAG"],
+        sConstants.GM_CMD_LVL_FLAG);
+    success &= LoadInteger(constants["GM_CMD_LVL_FUSION_GAUGE"],
+        sConstants.GM_CMD_LVL_FUSION_GAUGE);
+    success &= LoadInteger(constants["GM_CMD_LVL_GOTO"],
+        sConstants.GM_CMD_LVL_GOTO);
+    success &= LoadInteger(constants["GM_CMD_LVL_GRADE_POINTS"],
+        sConstants.GM_CMD_LVL_GRADE_POINTS);
+    success &= LoadInteger(constants["GM_CMD_LVL_HELP"],
+        sConstants.GM_CMD_LVL_HELP);
+    success &= LoadInteger(constants["GM_CMD_LVL_HOMEPOINT"],
+        sConstants.GM_CMD_LVL_HOMEPOINT);
+    success &= LoadInteger(constants["GM_CMD_LVL_INSTANCE"],
+        sConstants.GM_CMD_LVL_INSTANCE);
+    success &= LoadInteger(constants["GM_CMD_LVL_ITEM"],
+        sConstants.GM_CMD_LVL_ITEM);
+    success &= LoadInteger(constants["GM_CMD_LVL_KICK"],
+        sConstants.GM_CMD_LVL_KICK);
+    success &= LoadInteger(constants["GM_CMD_LVL_KILL"],
+        sConstants.GM_CMD_LVL_KILL);
+    success &= LoadInteger(constants["GM_CMD_LVL_LEVEL_UP"],
+        sConstants.GM_CMD_LVL_LEVEL_UP);
+    success &= LoadInteger(constants["GM_CMD_LVL_LNC"],
+        sConstants.GM_CMD_LVL_LNC);
+    success &= LoadInteger(constants["GM_CMD_LVL_MAP"],
+        sConstants.GM_CMD_LVL_MAP);
+    success &= LoadInteger(constants["GM_CMD_LVL_ONLINE"],
+        sConstants.GM_CMD_LVL_ONLINE);
+    success &= LoadInteger(constants["GM_CMD_LVL_PENALTY_RESET"],
+        sConstants.GM_CMD_LVL_PENALTY_RESET);
+    success &= LoadInteger(constants["GM_CMD_LVL_PLUGIN"],
+        sConstants.GM_CMD_LVL_PLUGIN);
+    success &= LoadInteger(constants["GM_CMD_LVL_POSITION"],
+        sConstants.GM_CMD_LVL_POSITION);
+    success &= LoadInteger(constants["GM_CMD_LVL_POST"],
+        sConstants.GM_CMD_LVL_POST);
+    success &= LoadInteger(constants["GM_CMD_LVL_REPORTED"],
+        sConstants.GM_CMD_LVL_REPORTED);
+    success &= LoadInteger(constants["GM_CMD_LVL_RESOLVE"],
+        sConstants.GM_CMD_LVL_RESOLVE);
+    success &= LoadInteger(constants["GM_CMD_LVL_REUNION"],
+        sConstants.GM_CMD_LVL_REUNION);
+    success &= LoadInteger(constants["GM_CMD_LVL_QUEST"],
+        sConstants.GM_CMD_LVL_QUEST);
+    success &= LoadInteger(constants["GM_CMD_LVL_SCRAP"],
+        sConstants.GM_CMD_LVL_SCRAP);
+    success &= LoadInteger(constants["GM_CMD_LVL_SKILL"],
+        sConstants.GM_CMD_LVL_SKILL);
+    success &= LoadInteger(constants["GM_CMD_LVL_SKILL_POINT"],
+        sConstants.GM_CMD_LVL_SKILL_POINT);
+    success &= LoadInteger(constants["GM_CMD_LVL_SLOT_ADD"],
+        sConstants.GM_CMD_LVL_SLOT_ADD);
+    success &= LoadInteger(constants["GM_CMD_LVL_SOUL_POINTS"],
+        sConstants.GM_CMD_LVL_SOUL_POINTS);
+    success &= LoadInteger(constants["GM_CMD_LVL_SPAWN"],
+        sConstants.GM_CMD_LVL_SPAWN);
+    success &= LoadInteger(constants["GM_CMD_LVL_SPEED"],
+        sConstants.GM_CMD_LVL_SPEED);
+    success &= LoadInteger(constants["GM_CMD_LVL_SPIRIT"],
+        sConstants.GM_CMD_LVL_SPIRIT);
+    success &= LoadInteger(constants["GM_CMD_LVL_SUPPORT"],
+        sConstants.GM_CMD_LVL_SUPPORT);
+    success &= LoadInteger(constants["GM_CMD_LVL_TICKER_MESSAGE"],
+        sConstants.GM_CMD_LVL_TICKER_MESSAGE);
+    success &= LoadInteger(constants["GM_CMD_LVL_TITLE"],
+        sConstants.GM_CMD_LVL_TITLE);
+    success &= LoadInteger(constants["GM_CMD_LVL_TOKUSEI"],
+        sConstants.GM_CMD_LVL_TOKUSEI);
+    success &= LoadInteger(constants["GM_CMD_LVL_VALUABLE"],
+        sConstants.GM_CMD_LVL_VALUABLE);
+    success &= LoadInteger(constants["GM_CMD_LVL_WORLD_TIME"],
+        sConstants.GM_CMD_LVL_WORLD_TIME);
+    success &= LoadInteger(constants["GM_CMD_LVL_ZIOTITE"],
+        sConstants.GM_CMD_LVL_ZIOTITE);
+    success &= LoadInteger(constants["GM_CMD_LVL_ZONE"],
+        sConstants.GM_CMD_LVL_ZONE);
+    success &= LoadInteger(constants["GM_CMD_LVL_XP"],
+        sConstants.GM_CMD_LVL_XP);
 
     return success;
 }

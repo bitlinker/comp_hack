@@ -35,6 +35,11 @@
 // object Includes
 #include <SearchEntry.h>
 
+namespace objects
+{
+class EventCounter;
+}
+
 namespace channel
 {
 
@@ -47,12 +52,6 @@ class ChannelServer;
 class ChannelSyncManager : public libcomp::DataSyncManager
 {
 public:
-    /**
-     * Create a new ChannelSyncManager with no associated server. This should not
-     * be used but is necessary for use with Sqrat.
-     */
-    ChannelSyncManager();
-
     /**
      * Create a new ChannelSyncManager
      * @param server Pointer back to the channel server this belongs to.
@@ -87,6 +86,12 @@ public:
         objects::SearchEntry::Type_t type);
 
     /**
+     * Get the world level event counter of the specified type
+     * @return Pointer to the world level event counter, can be null
+     */
+    std::shared_ptr<objects::EventCounter> GetWorldEventCounter(int32_t type);
+
+    /**
      * Server specific handler for explicit types of non-persistent records
      * being updated.
      * @param type Type name of the object being updated
@@ -100,10 +105,26 @@ public:
         const std::shared_ptr<libcomp::Object>& obj, bool isRemove,
         const libcomp::String& source);
 
+    /**
+     * Server specific handler for an operation following explicit types of
+     * non-persistent records being synced.
+     * @param type Type name of the object being updated
+     * @param objs List of pointers to the records being updated and a flag
+     *  indicating if the object was being removed
+     * @param source Source server identifier
+     */
+    template<class T> void SyncComplete(const libcomp::String& type,
+        const std::list<std::pair<std::shared_ptr<libcomp::Object>, bool>>& objs,
+        const libcomp::String& source);
+
 private:
     /// Map of all search entries on the world server by type
     libcomp::EnumMap<objects::SearchEntry::Type_t,
         std::list<std::shared_ptr<objects::SearchEntry>>> mSearchEntries;
+
+    /// Map of world level event counters by type
+    std::unordered_map<int32_t,
+        std::shared_ptr<objects::EventCounter>> mEventCounters;
 
     /// Pointer to the channel server.
     std::weak_ptr<ChannelServer> mServer;

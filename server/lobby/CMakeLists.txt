@@ -34,6 +34,7 @@ SET(${PROJECT_NAME}_SRCS
     src/AccountManager.cpp
     src/ApiHandler.cpp
     src/ClientState.cpp
+    src/ImportHandler.cpp
     src/LobbyClientConnection.cpp
     src/LobbyServer.cpp
     src/LoginHandlerThread.cpp
@@ -164,11 +165,11 @@ ENDIF(USE_COTIRE)
 
 UPX_WRAP(${PROJECT_NAME})
 
-INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR})
+INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR} COMPONENT lobby)
 
 # Include the PDB file if on Windows
 IF(WIN32)
-    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR})
+    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR} COMPONENT lobby)
 ENDIF(WIN32)
 
 RSPEC_TESTS(

@@ -83,6 +83,7 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/PartyUpdate.cpp                # 0x100A
     src/packets/ClanUpdate.cpp                 # 0x100B
     src/packets/WebGame.cpp                    # 0x100C
+    src/packets/TeamUpdate.cpp                 # 0x100D
 )
 
 IF(SINGLE_SOURCE_PACKETS)
@@ -116,9 +117,9 @@ ENDIF(USE_COTIRE)
 
 UPX_WRAP(${PROJECT_NAME})
 
-INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR})
+INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR} COMPONENT world)
 
 # Include the PDB file if on Windows
 IF(WIN32)
-    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR})
+    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR} COMPONENT world)
 ENDIF(WIN32)

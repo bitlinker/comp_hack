@@ -221,6 +221,17 @@ public:
         TokuseiAspectType type, std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
 
     /**
+     * Determine if the supplied value exists for a specified aspect type on
+     * an entity.
+     * @param eState Pointer to the tokusei source
+     * @param type Aspect type to gather values from
+     * @param value Value to check for
+     * @return true if the value exists, false if it does not
+     */
+    bool AspectValueExists(const std::shared_ptr<ActiveEntityState>& eState,
+        TokuseiAspectType type, double value);
+
+    /**
      * Recalculate all time restricted tokusei based on the current world time
      * @param clock World clock set to the current time
      */
@@ -235,6 +246,15 @@ public:
     void RemoveTrackingEntities(int32_t worldCID);
 
     /**
+     * Lower durability on all movement durability decay equipment
+     * @param client Pointer to the client connection
+     * @param distance Movement distance delta used to calculate how much the
+     *  durability will lower by
+     */
+    void UpdateMovementDecay(const std::shared_ptr<
+        ChannelClientConnection>& client, float distance);
+
+    /**
      * Send skill cost adjustments from tokusei for the specified entity to the
      * client
      * @param entityID ID of the entity with cost adjustments
@@ -242,6 +262,13 @@ public:
      */
     void SendCostAdjustments(int32_t entityID, const std::shared_ptr<
         ChannelClientConnection>& client);
+
+    /**
+     * Update all entities affected by the DIASPORA_MINIBOSS_COUNT tokusei
+     * condition in the supplied zone
+     * @param zone Pointer to the zone that was updated
+     */
+    void UpdateDiasporaMinibossCount(const std::shared_ptr<Zone>& zone);
 
 private:
     /**
@@ -320,6 +347,9 @@ private:
 
     /// Set of all tokusei with at least one cost adjustment aspect
     std::set<int32_t> mCostAdjustmentTokusei;
+
+    /// Set of all tokusei with at least one movement decay aspect
+    std::set<int32_t> mMoveDecayTokusei;
 
     /// Server lock for time calculation
     std::mutex mTimeLock;

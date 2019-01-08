@@ -34,17 +34,25 @@
 #include <cmath>
 
 // object Includes
+#include <ActionSpawn.h>
 #include <Ally.h>
 #include <CultureMachineState.h>
+#include <DiasporaBase.h>
+#include <EnemyBase.h>
 #include <Loot.h>
 #include <LootBox.h>
+#include <Match.h>
+#include <MiUraFieldTowerData.h>
 #include <PlasmaState.h>
+#include <PvPBase.h>
 #include <ServerNPC.h>
 #include <ServerObject.h>
 #include <ServerZone.h>
+#include <Spawn.h>
 #include <SpawnGroup.h>
 #include <SpawnLocationGroup.h>
 #include <SpawnRestriction.h>
+#include <UBMatch.h>
 
 // channel Includes
 #include "ChannelServer.h"
@@ -62,26 +70,37 @@ namespace libcomp
         {
             Using<objects::ZoneObject>();
             Using<ActiveEntityState>();
-            Using<objects::Demon>();
+            Using<PlasmaState>();
+            Using<objects::UBMatch>();
             Using<ZoneInstance>();
 
+            /// @todo: For some reason this crashes sqrat
+            //Using<AllyState>();
+            //Using<EnemyState>();
+
             Sqrat::DerivedClass<Zone,
-                objects::ZoneObject> binding(mVM, "Zone");
+                objects::ZoneObject,
+                Sqrat::NoConstructor<Zone>> binding(mVM, "Zone");
             binding
                 .Func("GetDefinitionID", &Zone::GetDefinitionID)
+                .Func("GetDynamicMapID", &Zone::GetDynamicMapID)
+                .Func("GetInstanceID", &Zone::GetInstanceID)
                 .Func("GetFlagState", &Zone::GetFlagStateValue)
+                .Func("GetUBMatch", &Zone::GetUBMatch)
                 .Func("GetZoneInstance", &Zone::GetInstance)
-                .Func("GroupHasSpawned", &Zone::GroupHasSpawned);
+                .Func("GroupHasSpawned", &Zone::GroupHasSpawned)
+                .Func("GetActiveEntity", &Zone::GetActiveEntity)
+                //.Func("GetAllies", &Zone::GetAllies)
+                //.Func("GetEnemies", &Zone::GetEnemies)
+                .Func<std::shared_ptr<PlasmaState>(Zone::*)(uint32_t)>(
+                    "GetPlasma", &Zone::GetPlasma)
+                .Func("EnableDisableSpawnGroup", &Zone::EnableDisableSpawnGroup);
 
             Bind<Zone>("Zone", binding);
         }
 
         return *this;
     }
-}
-
-Zone::Zone()
-{
 }
 
 Zone::Zone(uint32_t id, const std::shared_ptr<objects::ServerZone>& definition)
@@ -118,13 +137,8 @@ Zone::Zone(uint32_t id, const std::shared_ptr<objects::ServerZone>& definition)
 
     if(disabledGroupIDs.size() > 0)
     {
-        DisableSpawnGroups(disabledGroupIDs, true);
+        DisableSpawnGroups(disabledGroupIDs, true, true);
     }
-}
-
-Zone::Zone(const Zone& other)
-{
-    (void)other;
 }
 
 Zone::~Zone()
@@ -134,6 +148,17 @@ Zone::~Zone()
 uint32_t Zone::GetDefinitionID()
 {
     return GetDefinition()->GetID();
+}
+
+uint32_t Zone::GetDynamicMapID()
+{
+    return GetDefinition()->GetDynamicMapID();
+}
+
+uint32_t Zone::GetInstanceID()
+{
+    auto instance = GetInstance();
+    return instance ? instance->GetID() : 0;
 }
 
 const std::shared_ptr<ZoneGeometry> Zone::GetGeometry() const
@@ -172,6 +197,13 @@ bool Zone::HasRespawns() const
     return mHasRespawns;
 }
 
+bool Zone::HasStaggeredSpawns(uint64_t now)
+{
+    std::lock_guard<std::mutex> lock(mLock);
+    return mStaggeredSpawns.size() > 0 &&
+        mStaggeredSpawns.begin()->first <= now;
+}
+
 void Zone::SetDynamicMap(const std::shared_ptr<DynamicMap>& map)
 {
     mDynamicMap = map;
@@ -205,15 +237,21 @@ void Zone::RemoveConnection(const std::shared_ptr<ChannelClientConnection>& clie
     auto cState = state->GetCharacterState();
     auto dState = state->GetDemonState();
 
-    auto cEntityID = cState->GetEntityID();
-    auto dEntityID = dState->GetEntityID();
     int32_t worldCID = state->GetWorldCID();
 
-    UnregisterEntityState(cEntityID);
-    UnregisterEntityState(dEntityID);
+    for(auto eState : { std::dynamic_pointer_cast<ActiveEntityState>(cState),
+        std::dynamic_pointer_cast<ActiveEntityState>(dState) })
+    {
+        UnregisterEntityState(eState->GetEntityID());
 
-    cState->SetZone(0);
-    dState->SetZone(0);
+        eState->SetZone(0);
+
+        // Re-hide the entity until it enters another zone
+        if(eState->GetDisplayState() > ActiveDisplayState_t::DATA_SENT)
+        {
+            eState->SetDisplayState(ActiveDisplayState_t::DATA_SENT);
+        }
+    }
 
     std::lock_guard<std::mutex> lock(mLock);
     mConnections.erase(state->GetWorldCID());
@@ -235,7 +273,6 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
         std::lock_guard<std::mutex> lock(mLock);
 
         std::shared_ptr<ActiveEntityState> removeSpawn;
-        uint32_t sgID = 0, slgID = 0, encounterID = 0;
         switch(state->GetEntityType())
         {
         case EntityType_t::ALLY:
@@ -246,13 +283,8 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
                         return a->GetEntityID() == entityID;
                     });
 
-                auto aState = std::dynamic_pointer_cast<AllyState>(state);
-                auto ally = aState->GetEntity();
-
-                removeSpawn = aState;
-                sgID = ally->GetSpawnGroupID();
-                slgID = ally->GetSpawnLocationGroupID();
-                encounterID = ally->GetEncounterID();
+                removeSpawn = std::dynamic_pointer_cast<
+                    ActiveEntityState>(state);
             }
             break;
         case EntityType_t::ENEMY:
@@ -263,13 +295,10 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
                         return e->GetEntityID() == entityID;
                     });
 
-                auto eState = std::dynamic_pointer_cast<EnemyState>(state);
-                auto enemy = eState->GetEntity();
+                removeSpawn = std::dynamic_pointer_cast<
+                    ActiveEntityState>(state);
 
-                removeSpawn = eState;
-                sgID = enemy->GetSpawnGroupID();
-                slgID = enemy->GetSpawnLocationGroupID();
-                encounterID = enemy->GetEncounterID();
+                mBossIDs.erase(entityID);
             }
             break;
         case EntityType_t::LOOT_BOX:
@@ -310,6 +339,9 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
 
         if(removeSpawn)
         {
+            auto eBase = removeSpawn->GetEnemyBase();
+
+            uint32_t sgID = eBase->GetSpawnGroupID();
             if(sgID)
             {
                 mSpawnGroups[sgID].remove_if([removeSpawn](
@@ -319,6 +351,7 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
                     });
             }
 
+            uint32_t slgID = eBase->GetSpawnLocationGroupID();
             if(slgID)
             {
                 mSpawnLocationGroups[slgID].remove_if([removeSpawn](
@@ -327,27 +360,49 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
                         return e == removeSpawn;
                     });
 
-                auto slg = GetDefinition()->GetSpawnLocationGroups(slgID);
-                if(slg->GetRespawnTime() > 0.f &&
-                    mSpawnLocationGroups[slgID].size() == 0)
+                if(mSpawnLocationGroups[slgID].size() == 0)
                 {
-                    // Update the respawn time for the group, exit if found
-                    for(auto rPair : mRespawnTimes)
+                    auto slg = GetDefinition()->GetSpawnLocationGroups(slgID);
+                    if(slg->GetRespawnTime() > 0.f)
                     {
-                        if(rPair.second.find(slgID) != rPair.second.end())
+                        // Update the respawn time for the group, exit if found
+                        for(auto rPair : mRespawnTimes)
                         {
-                            return;
+                            if(rPair.second.find(slgID) != rPair.second.end())
+                            {
+                                return;
+                            }
                         }
+
+                        uint64_t rTime = ChannelServer::GetServerTime()
+                            + (uint64_t)((double)slg->GetRespawnTime() *
+                                1000000.0 + (double)(spawnDelay * 1000));
+
+                        mRespawnTimes[rTime].insert(slgID);
                     }
 
-                    uint64_t rTime = ChannelServer::GetServerTime()
-                        + (uint64_t)((double)slg->GetRespawnTime() *
-                            1000000.0 + (double)(spawnDelay * 1000));
+                    // Set the Diaspora mini-boss flag when applicable
+                    auto match = GetMatch();
+                    if(match && !mDiasporaMiniBossUpdated &&
+                        match->GetType() == objects::Match::Type_t::DIASPORA &&
+                        match->GetPhase() == DIASPORA_PHASE_BOSS)
+                    {
+                        for(auto bState : GetDiasporaBases())
+                        {
+                            auto base = bState->GetEntity();
 
-                    mRespawnTimes[rTime].insert(slgID);
+                            if(slgID == base->GetDefinition()
+                                ->GetPhaseMiniBosses(DIASPORA_PHASE_BOSS))
+                            {
+                                mDiasporaMiniBossUpdated = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
+            uint32_t encounterID = eBase->GetEncounterID();
             if(encounterID)
             {
                 // Remove if the encounter exists but do not remove
@@ -359,27 +414,71 @@ void Zone::RemoveEntity(int32_t entityID, uint32_t spawnDelay)
                     eIter->second.erase(removeSpawn);
                 }
             }
+
+            // If the enemy has not been displayed yet, remove it from the
+            // staggered spawns
+            if(removeSpawn->GetDisplayState() != ActiveDisplayState_t::ACTIVE)
+            {
+                for(auto& pair : mStaggeredSpawns)
+                {
+                    pair.second.remove_if([entityID]
+                        (const std::shared_ptr<ActiveEntityState>& e)
+                        {
+                            return e->GetEntityID() == entityID;
+                        });
+                }
+            }
+
+            // If the spawn has a summoning enemy, remove from its minions
+            if(eBase->GetSummonerID())
+            {
+                auto it = mAllEntities.find(eBase->GetSummonerID());
+                if(it != mAllEntities.end())
+                {
+                    auto active = std::dynamic_pointer_cast<ActiveEntityState>(
+                        it->second);
+                    auto eBase2 = active ? active->GetEnemyBase() : nullptr;
+                    if(eBase2)
+                    {
+                        eBase2->RemoveMinionIDs(removeSpawn->GetEntityID());
+                    }
+                }
+            }
         }
     }
 
     UnregisterEntityState(entityID);
 }
 
-void Zone::AddAlly(const std::shared_ptr<AllyState>& ally)
+void Zone::AddAlly(const std::shared_ptr<AllyState>& ally,
+    uint64_t staggerTime)
 {
     {
         std::lock_guard<std::mutex> lock(mLock);
-        mAllies.push_back(ally);
+
+        if(!staggerTime)
+        {
+            mAllies.push_back(ally);
+            ally->SetDisplayState(ActiveDisplayState_t::ACTIVE);
+        }
+        else
+        {
+            mStaggeredSpawns[staggerTime].push_back(ally);
+        }
 
         uint32_t spotID = ally->GetEntity()->GetSpawnSpotID();
         uint32_t sgID = ally->GetEntity()->GetSpawnGroupID();
         uint32_t slgID = ally->GetEntity()->GetSpawnLocationGroupID();
         AddSpawnedEntity(ally, spotID, sgID, slgID);
-
-        ally->SetDisplayState(ActiveDisplayState_t::ACTIVE);
     }
 
     RegisterEntityState(ally);
+}
+
+void Zone::AddBase(const std::shared_ptr<objects::EntityStateObject>& base)
+{
+    mBases.push_back(base);
+    RegisterEntityState(base);
 }
 
 void Zone::AddBazaar(const std::shared_ptr<BazaarState>& bazaar)
@@ -399,18 +498,40 @@ void Zone::AddCultureMachine(const std::shared_ptr<
     }
 }
 
-void Zone::AddEnemy(const std::shared_ptr<EnemyState>& enemy)
+void Zone::AddEnemy(const std::shared_ptr<EnemyState>& enemy,
+    uint64_t staggerTime)
 {
     {
         std::lock_guard<std::mutex> lock(mLock);
-        mEnemies.push_back(enemy);
 
-        uint32_t spotID = enemy->GetEntity()->GetSpawnSpotID();
-        uint32_t sgID = enemy->GetEntity()->GetSpawnGroupID();
-        uint32_t slgID = enemy->GetEntity()->GetSpawnLocationGroupID();
+        if(!staggerTime)
+        {
+            mEnemies.push_back(enemy);
+            enemy->SetDisplayState(ActiveDisplayState_t::ACTIVE);
+        }
+        else
+        {
+            mStaggeredSpawns[staggerTime].push_back(enemy);
+        }
+
+        auto entity = enemy->GetEntity();
+
+        auto spawn = entity->GetSpawnSource();
+        if(spawn && spawn->GetCategory() == objects::Spawn::Category_t::BOSS)
+        {
+            mBossIDs.insert(enemy->GetEntityID());
+
+            auto ubMatch = GetUBMatch();
+            if(ubMatch && !ubMatch->GetPhaseBoss())
+            {
+                ubMatch->SetPhaseBoss(spawn->GetEnemyType());
+            }
+        }
+
+        uint32_t spotID = entity->GetSpawnSpotID();
+        uint32_t sgID = entity->GetSpawnGroupID();
+        uint32_t slgID = entity->GetSpawnLocationGroupID();
         AddSpawnedEntity(enemy, spotID, sgID, slgID);
-
-        enemy->SetDisplayState(ActiveDisplayState_t::ACTIVE);
     }
 
     RegisterEntityState(enemy);
@@ -553,6 +674,27 @@ const std::unordered_map<uint32_t,
     return mCultureMachines;
 }
 
+std::shared_ptr<DiasporaBaseState> Zone::GetDiasporaBase(int32_t id)
+{
+    return std::dynamic_pointer_cast<DiasporaBaseState>(GetEntity(id));
+}
+
+const std::list<std::shared_ptr<DiasporaBaseState>>
+    Zone::GetDiasporaBases() const
+{
+    std::list<std::shared_ptr<DiasporaBaseState>> bases;
+    for(auto base : mBases)
+    {
+        auto b = std::dynamic_pointer_cast<DiasporaBaseState>(base);
+        if(b)
+        {
+            bases.push_back(b);
+        }
+    }
+
+    return bases;
+}
+
 std::shared_ptr<EnemyState> Zone::GetEnemy(int32_t id)
 {
     return std::dynamic_pointer_cast<EnemyState>(GetEntity(id));
@@ -561,6 +703,23 @@ std::shared_ptr<EnemyState> Zone::GetEnemy(int32_t id)
 const std::list<std::shared_ptr<EnemyState>> Zone::GetEnemies() const
 {
     return mEnemies;
+}
+
+const std::list<std::shared_ptr<EnemyState>> Zone::GetBosses()
+{
+    std::list<std::shared_ptr<EnemyState>> result;
+
+    auto entityIDs = mBossIDs;
+    for(int32_t id : entityIDs)
+    {
+        auto eState = GetEnemy(id);
+        if(eState)
+        {
+            result.push_back(eState);
+        }
+    }
+
+    return result;
 }
 
 std::shared_ptr<LootBoxState> Zone::GetLootBox(int32_t id)
@@ -613,6 +772,117 @@ bool Zone::ClaimBossBox(int32_t id, int32_t looterID)
     return false;
 }
 
+int32_t Zone::OccupyPvPBase(int32_t baseID, int32_t occupierID, bool complete,
+    uint64_t occupyStartTime)
+{
+    auto bState = GetPvPBase(baseID);
+
+    std::lock_guard<std::mutex> lock(mLock);
+
+    auto state = occupierID > 0
+        ? ClientState::GetEntityClientState(occupierID) : nullptr;
+    auto sZone = state ? state->GetZone() : nullptr;
+    if(!bState || (occupierID > 0 && (!sZone || sZone.get() != this)))
+    {
+        // It seems like there should be other error codes but the
+        // client does not respond differently to any of them
+        return -1;
+    }
+
+    auto base = bState->GetEntity();
+    if(occupierID <= 0)
+    {
+        if(complete)
+        {
+            // Remove occupier
+            base->SetOccupyTime(0);
+            base->SetOccupierID(0);
+            return 0;
+        }
+        else
+        {
+            // Cannot start occupation with no entity
+            return -1;
+        }
+    }
+
+    if(!state)
+    {
+        // Player entity required past this point
+        return -1;
+    }
+
+    int32_t teamID = (int32_t)(state->GetCharacterState()
+        ->GetFactionGroup() - 1);
+    if(teamID != 0 && teamID != 1)
+    {
+        // Not on a PvP team
+        return -1;
+    }
+
+    if(!complete)
+    {
+        // Requesting to start occupation
+        if(base->GetOccupierID())
+        {
+            // Already being occupied
+            return -1;
+        }
+
+        if(base->GetTeam() != 2 && (int32_t)base->GetTeam() == teamID)
+        {
+            // Already owned by the same team
+            return -1;
+        }
+
+        // Occupation valid
+        base->SetOccupyTime(ChannelServer::GetServerTime());
+        base->SetOccupierID(occupierID);
+    }
+    else
+    {
+        // Requesting to finish occupation
+        if(base->GetOccupierID() != occupierID)
+        {
+            // Not the current occupier
+            return -1;
+        }
+
+        if(base->GetOccupyTime() != occupyStartTime)
+        {
+            // Time has been reset
+            return -1;
+        }
+
+        base->SetTeam((int8_t)teamID);
+        base->SetOccupierID(0);
+        base->SetBonusCount(0);
+    }
+
+    return 0;
+}
+
+uint16_t Zone::IncreasePvPBaseBonus(int32_t baseID, uint64_t occupyStartTime)
+{
+    auto bState = GetPvPBase(baseID);
+    if(!bState)
+    {
+        return 0;
+    }
+
+    std::lock_guard<std::mutex> lock(mLock);
+
+    auto base = bState->GetEntity();
+    if(base->GetOccupyTime() == occupyStartTime)
+    {
+        uint16_t bCount = (uint16_t)(base->GetBonusCount() + 1);
+        base->SetBonusCount(bCount);
+        return bCount;
+    }
+
+    return 0;
+}
+
 const std::list<std::shared_ptr<NPCState>> Zone::GetNPCs() const
 {
     return mNPCs;
@@ -628,6 +898,26 @@ const std::unordered_map<uint32_t,
     std::shared_ptr<PlasmaState>> Zone::GetPlasma() const
 {
     return mPlasma;
+}
+
+std::shared_ptr<PvPBaseState> Zone::GetPvPBase(int32_t id)
+{
+    return std::dynamic_pointer_cast<PvPBaseState>(GetEntity(id));
+}
+
+const std::list<std::shared_ptr<PvPBaseState>> Zone::GetPvPBases() const
+{
+    std::list<std::shared_ptr<PvPBaseState>> bases;
+    for(auto base : mBases)
+    {
+        auto b = std::dynamic_pointer_cast<PvPBaseState>(base);
+        if(b)
+        {
+            bases.push_back(b);
+        }
+    }
+
+    return bases;
 }
 
 const std::list<std::shared_ptr<ServerObjectState>> Zone::GetServerObjects() const
@@ -760,7 +1050,8 @@ bool Zone::SpawnedAtSpot(uint32_t spotID)
 
 void Zone::CreateEncounter(
     const std::list<std::shared_ptr<ActiveEntityState>>& entities,
-    std::shared_ptr<objects::ActionSpawn> spawnSource)
+    bool staggerSpawn, const std::list<
+    std::shared_ptr<objects::Action>>& defeatActions)
 {
     if(entities.size() > 0)
     {
@@ -777,28 +1068,47 @@ void Zone::CreateEncounter(
             }
         }
 
-        if(spawnSource)
+        if(defeatActions.size() > 0)
         {
-            mEncounterSpawnSources[encounterID] = spawnSource;
+            mEncounterDefeatActions[encounterID] = defeatActions;
         }
     }
 
+    bool first = true;
+    uint64_t staggerTime = 0;
     for(auto entity : entities)
     {
+        if(!first && staggerSpawn)
+        {
+            if(!staggerTime)
+            {
+                staggerTime = ChannelServer::GetServerTime();
+            }
+
+            // Spawn every half second
+            staggerTime = (uint64_t)(staggerTime + 500000);
+        }
+
         if(entity->GetEntityType() == EntityType_t::ENEMY)
         {
-            AddEnemy(std::dynamic_pointer_cast<EnemyState>(entity));
+            AddEnemy(std::dynamic_pointer_cast<EnemyState>(entity),
+                staggerTime);
         }
         else if(entity->GetEntityType() == EntityType_t::ALLY)
         {
-            AddAlly(std::dynamic_pointer_cast<AllyState>(entity));
+            AddAlly(std::dynamic_pointer_cast<AllyState>(entity),
+                staggerTime);
         }
+
+        first = false;
     }
 }
 
 bool Zone::EncounterDefeated(uint32_t encounterID,
-    std::shared_ptr<objects::ActionSpawn>& defeatActionSource)
+    std::list<std::shared_ptr<objects::Action>>& defeatActions)
 {
+    defeatActions.clear();
+
     std::lock_guard<std::mutex> lock(mLock);
     auto it = mEncounters.find(encounterID);
     if(it != mEncounters.end())
@@ -811,18 +1121,18 @@ bool Zone::EncounterDefeated(uint32_t encounterID,
             }
         }
 
-        mEncounters.erase(encounterID);
+        mEncounters.erase(it);
 
-        auto dIter = mEncounterSpawnSources.find(encounterID);
-        if(dIter != mEncounterSpawnSources.end())
+        auto dIter = mEncounterDefeatActions.find(encounterID);
+        if(dIter != mEncounterDefeatActions.end())
         {
-            defeatActionSource = dIter->second;
+            for(auto action : dIter->second)
+            {
+                defeatActions.push_back(action);
+            }
+
+            mEncounterDefeatActions.erase(dIter);
         }
-        else
-        {
-            defeatActionSource = nullptr;
-        }
-        mEncounterSpawnSources.erase(encounterID);
 
         return true;
     }
@@ -861,6 +1171,14 @@ bool Zone::UpdateTimedSpawns(const WorldClock& clock,
     std::lock_guard<std::mutex> lock(mLock);
     for(auto sgPair : GetDefinition()->GetSpawnGroups())
     {
+        if(mDeactivatedSpawnGroups.find(sgPair.first) !=
+            mDeactivatedSpawnGroups.end())
+        {
+            // De-activated groups cannot be re-enabled via time restrictions
+            // only
+            continue;
+        }
+
         auto sg = sgPair.second;
         auto restriction = sg->GetRestrictions();
         if(restriction)
@@ -878,30 +1196,30 @@ bool Zone::UpdateTimedSpawns(const WorldClock& clock,
 
     if(enableSpawnGroups.size() > 0)
     {
-        EnableSpawnGroups(enableSpawnGroups, initializing);
+        EnableSpawnGroups(enableSpawnGroups, initializing, false);
     }
 
     if(disableSpawnGroups.size() > 0)
     {
         updated = DisableSpawnGroups(disableSpawnGroups,
-            initializing);
+            initializing, false);
     }
 
-    for(auto pPair : GetDefinition()->GetPlasmaSpawns())
+    for(auto& pPair : mPlasma)
     {
-        auto plasma = pPair.second;
+        auto plasma = pPair.second->GetEntity();
         auto restriction = plasma->GetRestrictions();
         if(restriction)
         {
             if(TimeRestrictionActive(clock, restriction))
             {
-                // Plasma active
-                /// @todo
+                // Plasma enabled
+                pPair.second->Toggle(true);
             }
             else
             {
-                // Plasma inactive
-                /// @todo
+                // Plasma disabled
+                pPair.second->Toggle(false);
             }
         }
     }
@@ -909,18 +1227,19 @@ bool Zone::UpdateTimedSpawns(const WorldClock& clock,
     return updated;
 }
 
-bool Zone::EnableDisableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-    bool enable)
+bool Zone::EnableDisableSpawnGroup(uint32_t spawnGroupID, bool enable)
 {
+    std::set<uint32_t> spawnGroupIDs = { spawnGroupID };
+
     std::lock_guard<std::mutex> lock(mLock);
     if(enable)
     {
-        EnableSpawnGroups(spawnGroupIDs, false);
+        EnableSpawnGroups(spawnGroupIDs, false, true);
         return false;
     }
     else
     {
-        return DisableSpawnGroups(spawnGroupIDs, false);
+        return DisableSpawnGroups(spawnGroupIDs, false, true);
     }
 }
 
@@ -954,6 +1273,120 @@ std::set<uint32_t> Zone::GetRespawnLocations(uint64_t now)
     }
 
     return result;
+}
+
+std::list<std::shared_ptr<ActiveEntityState>>
+    Zone::UpdateStaggeredSpawns(uint64_t now)
+{
+    std::list<std::shared_ptr<ActiveEntityState>> result;
+
+    std::set<uint64_t> passed;
+
+    std::lock_guard<std::mutex> lock(mLock);
+    for(auto pair : mStaggeredSpawns)
+    {
+        if(pair.first > now) break;
+
+        passed.insert(pair.first);
+
+        for(auto eState : pair.second)
+        {
+            auto eBase = eState->GetEnemyBase();
+            uint32_t sgID = eBase ? eBase->GetSpawnGroupID() : 0;
+
+            // Don't actually spawn anything in a disabled group
+            if(!sgID ||
+                mDisabledSpawnGroups.find(sgID) == mDisabledSpawnGroups.end())
+            {
+                result.push_back(eState);
+
+                if(eState->GetEntityType() == EntityType_t::ENEMY)
+                {
+                    mEnemies.push_back(
+                        std::dynamic_pointer_cast<EnemyState>(eState));
+                }
+                else
+                {
+                    mAllies.push_back(
+                        std::dynamic_pointer_cast<AllyState>(eState));
+                }
+
+                eState->SetDisplayState(ActiveDisplayState_t::ACTIVE);
+            }
+        }
+    }
+
+    for(auto p : passed)
+    {
+        mStaggeredSpawns.erase(p);
+    }
+
+    return result;
+}
+
+std::shared_ptr<ActiveEntityState> Zone::StartStopCombat(int32_t entityID,
+    uint64_t timeout, bool checkBefore)
+{
+    std::lock_guard<std::mutex> lock(mLock);
+    auto it = mAllEntities.find(entityID);
+    if(it != mAllEntities.end())
+    {
+        // They have to be in the zone or this fails
+        auto active = std::dynamic_pointer_cast<ActiveEntityState>(it->second);
+        if(active)
+        {
+            if(checkBefore && active->GetCombatTimeOut() > timeout)
+            {
+                // Can't end yet
+                return nullptr;
+            }
+
+            bool endTime = timeout == 0 || checkBefore;
+
+            bool result = (active->GetCombatTimeOut() == 0) != endTime;
+            if(!checkBefore)
+            {
+                auto state = ClientState::GetEntityClientState(entityID);
+                if(state)
+                {
+                    // Add both player entities
+                    auto cState = state->GetCharacterState();
+                    auto dState = state->GetDemonState();
+
+                    cState->SetCombatTimeOut(timeout);
+                    dState->SetCombatTimeOut(timeout);
+
+                    if(!timeout)
+                    {
+                        RemoveCombatantIDs(cState->GetEntityID());
+                        RemoveCombatantIDs(dState->GetEntityID());
+                    }
+                    else
+                    {
+                        InsertCombatantIDs(cState->GetEntityID());
+                        InsertCombatantIDs(dState->GetEntityID());
+                    }
+                }
+                else
+                {
+                    active->SetCombatTimeOut(timeout);
+
+                    if(endTime)
+                    {
+                        RemoveCombatantIDs(active->GetEntityID());
+                    }
+                    else
+                    {
+                        InsertCombatantIDs(active->GetEntityID());
+                    }
+                }
+            }
+
+            return result ? active : nullptr;
+        }
+    }
+
+    return nullptr;
 }
 
 bool Zone::GetFlagState(int32_t key, int32_t& value, int32_t worldCID)
@@ -1053,6 +1486,80 @@ std::unordered_map<size_t, std::shared_ptr<objects::Loot>>
     return result;
 }
 
+std::set<int8_t> Zone::GetBaseRestrictedActionTypes()
+{
+    std::set<int8_t> result;
+
+    // Action type restrictions only apply during the boss phase
+    auto match = GetMatch();
+    if(match && match->GetType() == objects::Match::Type_t::DIASPORA &&
+        match->GetPhase() == DIASPORA_PHASE_BOSS)
+    {
+        for(auto bState : GetDiasporaBases())
+        {
+            auto base = bState->GetEntity();
+            int8_t actionType = (int8_t)base->GetDefinition()
+                ->GetSealedActionType();
+            if(actionType >= 0 && !base->GetCaptured())
+            {
+                // ID 8 actually means "item skills" which is the only
+                // non-action type in the set
+                result.insert(actionType == 8 ? -1 : actionType);
+            }
+        }
+    }
+
+    return result;
+}
+
+std::pair<uint8_t, uint8_t> Zone::GetDiasporaMiniBossCount()
+{
+    std::pair<uint8_t, uint8_t> result(0, 0);
+
+    auto match = GetMatch();
+    if(match && match->GetType() == objects::Match::Type_t::DIASPORA &&
+        match->GetPhase() == DIASPORA_PHASE_BOSS)
+    {
+        for(auto bState : GetDiasporaBases())
+        {
+            auto base = bState->GetEntity();
+
+            uint32_t slgID = base->GetDefinition()
+                ->GetPhaseMiniBosses(DIASPORA_PHASE_BOSS);
+            if(slgID)
+            {
+                // Update total count
+                result.second = (uint8_t)(result.second + 1);
+
+                if(GroupHasSpawned(slgID, true, true))
+                {
+                    // Update active count
+                    result.first = (uint8_t)(result.first + 1);
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+bool Zone::DiasporaMiniBossUpdated()
+{
+    std::lock_guard<std::mutex> lock(mLock);
+    if(mDiasporaMiniBossUpdated)
+    {
+        mDiasporaMiniBossUpdated = false;
+        return true;
+    }
+
+    return false;
+}
+
+std::shared_ptr<objects::UBMatch> Zone::GetUBMatch() const
+{
+    return std::dynamic_pointer_cast<objects::UBMatch>(GetMatch());
+}
+
 uint32_t Zone::GetNextRentalExpiration() const
 {
     return mNextRentalExpiration;
@@ -1123,12 +1630,22 @@ void Zone::Cleanup()
         }
     }
 
+    mAllies.clear();
+    mBases.clear();
+    mBazaars.clear();
+    mBossIDs.clear();
+    mCultureMachines.clear();
+    mEncounters.clear();
+    mEncounterDefeatActions.clear();
     mEnemies.clear();
     mNPCs.clear();
     mObjects.clear();
+    mPlasma.clear();
+    mActors.clear();
     mAllEntities.clear();
     mSpawnGroups.clear();
     mSpawnLocationGroups.clear();
+    mStaggeredSpawns.clear();
 
     mZoneInstance = nullptr;
 
@@ -1173,7 +1690,8 @@ bool Zone::TimeRestrictionActive(const WorldClock& clock,
         }
     }
 
-    if(((restriction->GetDayRestriction() >> (clock.WeekDay - 1)) & 1) == 0)
+    if(restriction->GetDayRestriction() < 0x7F &&
+        ((restriction->GetDayRestriction() >> (clock.WeekDay - 1)) & 1) == 0)
     {
         return false;
     }
@@ -1267,6 +1785,28 @@ void Zone::AddSpawnedEntity(const std::shared_ptr<ActiveEntityState>& state,
     auto slg = GetDefinition()->GetSpawnLocationGroups(slgID);
     if(slg)
     {
+        // If we're adding the first entity from an SLG that is one
+        // of the Diaspora mini-boss groups and we're in the boss phase,
+        // set the flag indicating such
+        auto match = GetMatch();
+        if(match && !mDiasporaMiniBossUpdated &&
+            mSpawnLocationGroups[slgID].size() == 0 &&
+            match->GetType() == objects::Match::Type_t::DIASPORA &&
+            match->GetPhase() == DIASPORA_PHASE_BOSS)
+        {
+            for(auto bState : GetDiasporaBases())
+            {
+                auto base = bState->GetEntity();
+
+                if(slgID == base->GetDefinition()
+                    ->GetPhaseMiniBosses(DIASPORA_PHASE_BOSS))
+                {
+                    mDiasporaMiniBossUpdated = true;
+                    break;
+                }
+            }
+        }
+
         mSpawnLocationGroups[slgID].push_back(state);
 
         // Be sure to clear the respawn time
@@ -1281,12 +1821,14 @@ void Zone::AddSpawnedEntity(const std::shared_ptr<ActiveEntityState>& state,
 }
 
 void Zone::EnableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-    bool initializing)
+    bool initializing, bool activate)
 {
     std::set<uint32_t> enabled;
     for(uint32_t sgID : spawnGroupIDs)
     {
-        if(mDisabledSpawnGroups.find(sgID) != mDisabledSpawnGroups.end())
+        if(mDisabledSpawnGroups.find(sgID) != mDisabledSpawnGroups.end() &&
+            (activate || mDeactivatedSpawnGroups.find(sgID) ==
+                mDeactivatedSpawnGroups.end()))
         {
             if(!initializing)
             {
@@ -1296,6 +1838,7 @@ void Zone::EnableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
 
             enabled.insert(sgID);
             mDisabledSpawnGroups.erase(sgID);
+            mDeactivatedSpawnGroups.erase(sgID);
         }
     }
 
@@ -1347,7 +1890,7 @@ void Zone::EnableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
 }
 
 bool Zone::DisableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-    bool initializing)
+    bool initializing, bool deactivate)
 {
     bool updated = false;
 
@@ -1375,6 +1918,11 @@ bool Zone::DisableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
 
             mDisabledSpawnGroups.insert(sgID);
             disabled.insert(sgID);
+
+            if(deactivate)
+            {
+                mDeactivatedSpawnGroups.insert(sgID);
+            }
         }
     }
 

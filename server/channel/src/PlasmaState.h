@@ -134,6 +134,30 @@ public:
     std::list<std::shared_ptr<PlasmaPoint>> GetActivePoints();
 
     /**
+     * Determine if the plasma is marked as active or any points are
+     * not currently hidden.
+     * @param visible If true, the plasma is only considered active if
+     *  a single point is not currently hidden. If false, the plasma is
+     *  only considered active if its deactivated parameter is not set.
+     * @return true if active or points are not hidden, false otherwise
+     */
+    bool IsActive(bool visible = false);
+
+    /**
+     * Enable/disable (or activate/deactivate) the plasma set. Enabling plasma
+     * causes it to appear in the zone on next server tick. Disabling plasma
+     * causes it to despawn on next server tick. Deactivated plasma will
+     * neither spawn nor despawn until it is activated again. For most non-time
+     * trigger processes, modifying if the plasma is active is the normal
+     * use case.
+     * @param enable If true the points will be enabled, if false they
+     *  will be disabled and de-pop if active
+     * @param activation If true the points will be activated or deactivated
+     *  instead of enabled or disabled. Defaults to false.
+     */
+    void Toggle(bool enable, bool activation = false);
+
+    /**
      * Check if there is plasma pending a hide or respawn update
      * @param respawn true if points pending respawn should be
      *  retrieved, false if points pending hiding should be
@@ -252,6 +276,13 @@ private:
     /// Map of point IDs to server times when that point should be
     /// hidden to respawn later
     std::unordered_map<uint32_t, uint64_t> mPointHides;
+
+    /// Indicates if the plasma set is deactivated and will not re-enable
+    /// until it has been activated again
+    bool mDeactivated;
+
+    /// Indicates if the plasma set is disabled and no points will spawn
+    bool mDisabled;
 
     /// Server lock for shared resources
     std::mutex mLock;

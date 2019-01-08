@@ -108,7 +108,8 @@ bool Parsers::ItemMix::Parse(libcomp::ManagerPacket *pPacketManager,
             bool failure = !extData;
             if(!failure)
             {
-                if(extData->GetGroupID() != blendData->GetExtensionGroupID() ||
+                if((extData->GetGroupID() && extData->GetGroupID() !=
+                    blendData->GetExtensionGroupID()) ||
                     itemExt->GetItemBox() != inventory->GetUUID() ||
                     itemExt->GetStackSize() == 0)
                 {
@@ -155,7 +156,7 @@ bool Parsers::ItemMix::Parse(libcomp::ManagerPacket *pPacketManager,
     }
 
     uint8_t expertRank = expertID ?
-        cState->GetExpertiseRank(definitionManager, (uint32_t)expertID) : 0;
+        cState->GetExpertiseRank((uint32_t)expertID, definitionManager) : 0;
     if(success && expertID && (requiredClass * 10 + requiredRank) > expertRank)
     {
         LOG_ERROR(libcomp::String("ItemMix attempted without required"
@@ -382,11 +383,11 @@ bool Parsers::ItemMix::Parse(libcomp::ManagerPacket *pPacketManager,
 
             lossRate = lossRate * lossRateScale;
 
-            item1Min = (uint16_t)ceil((float)item1Min * item1MinScale);
-            item2Min = (uint16_t)ceil((float)item2Min * item2MinScale);
+            item1Min = (uint16_t)floor((float)item1Min * item1MinScale);
+            item2Min = (uint16_t)floor((float)item2Min * item2MinScale);
 
-            item1Max = (uint16_t)ceil((float)item1Max * item1MaxScale);
-            item2Max = (uint16_t)ceil((float)item2Max * item2MaxScale);
+            item1Max = (uint16_t)floor((float)item1Max * item1MaxScale);
+            item2Max = (uint16_t)floor((float)item2Max * item2MaxScale);
         }
 
         // Apply expertise boosts
@@ -424,12 +425,22 @@ bool Parsers::ItemMix::Parse(libcomp::ManagerPacket *pPacketManager,
             for(auto existing : characterManager->GetExistingItems(character,
                 itemType, inventory))
             {
-                if((uint16_t)(existing->GetStackSize() + itemCount) <=
+                uint16_t stackSize = existing->GetStackSize();
+
+                // Make sure we don't cancel an existing change
+                auto it = updateItems.find(existing);
+                if(it != updateItems.end())
+                {
+                    stackSize = it->second;
+                }
+
+                if((uint16_t)(stackSize + itemCount) <=
                     itemData->GetPossession()->GetStackSize())
                 {
                     newItem = existing;
                     updateItems[newItem] = (uint16_t)(
-                        newItem->GetStackSize() + itemCount);
+                        stackSize + itemCount);
+                    break;
                 }
             }
 

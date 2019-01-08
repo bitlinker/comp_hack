@@ -125,15 +125,29 @@ struct Data
     /// Menu ID of the Tri-Fusion (solo) process
     uint32_t MENU_TRIFUSION_KZ;
 
+    /// Menu ID of the Ultimate Battle rankings
+    uint32_t MENU_UB_RANKING;
+
     /// Menu ID of the web-game interface
     uint32_t MENU_WEB_GAME;
 
+    /// Demon ID of mitama type: Aramitama (アラミタマ)
+    uint32_t MITAMA_1_ARAMITAMA;
+
+    /// Demon ID of mitama type: Nigimitama (ニギミタマ)
+    uint32_t MITAMA_2_NIGIMITAMA;
+
+    /// Demon ID of mitama type: Kushimitama (クシミタマ)
+    uint32_t MITAMA_3_KUSHIMITAMA;
+
+    /// Demon ID of mitama type: Sakimitama (サキミタマ)
+    uint32_t MITAMA_4_SAKIMITAMA;
+
+    /// Skill ID of the mitama set effect boosting passive
+    uint32_t MITAMA_SET_BOOST;
+
     /// Function ID of absolute damage dealing skills
     uint16_t SKILL_ABS_DAMAGE;
-
-    /// Function ID of skills unique to bosses that have special
-    /// range and damage adjustments
-    uint16_t SKILL_BOSS_SPECIAL;
 
     /// Function ID of "cameo" skills
     uint16_t SKILL_CAMEO;
@@ -365,17 +379,26 @@ struct Data
     /// Status effect ID of instant death
     uint32_t STATUS_DEATH;
 
+    /// Status effect ID of the all character hide effect
+    uint32_t STATUS_DEMON_ONLY;
+
     /// Status effect ID indicating an active demon quest expiration
     uint32_t STATUS_DEMON_QUEST_ACTIVE;
 
-    /// Status effect ID of (demon solo used) entity hide effect
-    uint32_t STATUS_HIDDEN;
+    /// Status effect IDs for the male and female digitalized states
+    std::array<uint32_t, 2> STATUS_DIGITALIZE;
+
+    /// Status effect ID of the post digitalize cooldown state
+    uint32_t STATUS_DIGITALIZE_COOLDOWN;
 
     /// Status effect ID of the demon riding mounted state
     uint32_t STATUS_MOUNT;
 
     /// Status effect ID of the extended demon riding mounted state
     uint32_t STATUS_MOUNT_SUPER;
+
+    /// Status effect ID of the XP preserving reunion effect
+    uint32_t STATUS_REUNION_XP_SAVE;
 
     /// Status effect ID of the sleep effect
     uint32_t STATUS_SLEEP;
@@ -392,6 +415,10 @@ struct Data
     /// Tokusei ID associated to boosting on a bike
     int32_t TOKUSEI_BIKE_BOOST;
 
+    /// Tokusei ID corresponding to the MP cost reduction passive
+    /// effect associated to the "Magic Control" expertise
+    int32_t TOKUSEI_MAGIC_CONTROL_COST;
+
     /// Valuable ID of the demonic compendium V1
     uint16_t VALUABLE_DEVIL_BOOK_V1;
 
@@ -400,6 +427,12 @@ struct Data
 
     /// Valuable ID of the demon force enabling item
     uint16_t VALUABLE_DEMON_FORCE;
+
+    /// Valuable ID of the level 1 digitalize novice item
+    uint16_t VALUABLE_DIGITALIZE_LV1;
+
+    /// Valuable ID of the level 2 digitalize artisan item
+    uint16_t VALUABLE_DIGITALIZE_LV2;
 
     /// Valuable ID of the fusion gauge enabling item
     uint16_t VALUABLE_FUSION_GAUGE;
@@ -474,6 +507,12 @@ struct Data
     /// Index 3) MiSynthesisData
     std::array<std::list<uint32_t>, 4> RATE_SCALING_ITEMS;
 
+    /// List of reunion point extraction items in priority order
+    std::list<uint32_t> REUNION_EXTRACT_ITEMS;
+
+    /// List of digitalize assist removal items in priority order
+    std::list<uint32_t> ROLLBACK_PG_ITEMS;
+
     /// Item IDs mapped to success, great success boosts. Items can be equipped
     /// or be part of the fusion.
     std::unordered_map<uint32_t, std::array<uint8_t, 2>> SPIRIT_FUSION_BOOST;
@@ -481,6 +520,13 @@ struct Data
     /// Synth skill IDs for demon crystallization, tarot enchant, soul enchant,
     /// synth melee and synth gun skills
     std::array<uint32_t, 5> SYNTH_SKILLS;
+
+    /// Map of team types to status effect IDs that represent cooldown times
+    std::unordered_map<int8_t, uint32_t> TEAM_STATUS_COOLDOWN;
+
+    /// Map of team types to valuables required to create or participate in
+    /// that type
+    std::unordered_map<int8_t, std::list<uint16_t>> TEAM_VALUABLES;
 
     /// Level ranges to use for TriFusion of 3 "dark" family demons
     std::list<std::pair<uint8_t, uint32_t>> TRIFUSION_SPECIAL_DARK;
@@ -491,7 +537,126 @@ struct Data
     std::array<std::array<uint32_t, 6>, 6> TRIFUSION_SPECIAL_ELEMENTAL;
 
     /// Item IDs that allow creation of VA items from a normal one
-    std::set<uint32_t> VA_ADD_ITEM;
+    std::set<uint32_t> VA_ADD_ITEMS;
+
+    //
+    // GM Command Levels
+    //
+
+    /// Required user level for the @addcp GM command.
+    uint32_t GM_CMD_LVL_ADD_CP;
+    /// Required user level for the @announce GM command.
+    uint32_t GM_CMD_LVL_ANNOUNCE;
+    /// Required user level for the @ban GM command.
+    uint32_t GM_CMD_LVL_BAN;
+    /// Required user level for the @bp GM command.
+    uint32_t GM_CMD_LVL_BATTLE_POINTS;
+    /// Required user level for the @bethel GM command.
+    uint32_t GM_CMD_LVL_BETHEL;
+    /// Required user level for the @coin GM command.
+    uint32_t GM_CMD_LVL_COIN;
+    /// Required user level for the @contract GM command.
+    uint32_t GM_CMD_LVL_CONTRACT;
+    /// Required user level for the @counter GM command.
+    uint32_t GM_CMD_LVL_COUNTER;
+    /// Required user level for the @cowrie GM command.
+    uint32_t GM_CMD_LVL_COWRIE;
+    /// Required user level for the @crash GM command.
+    uint32_t GM_CMD_LVL_CRASH;
+    /// Required user level for the @dxp GM command.
+    uint32_t GM_CMD_LVL_DIGITALIZE_POINTS;
+    /// Required user level for the @effect GM command.
+    uint32_t GM_CMD_LVL_EFFECT;
+    /// Required user level for the @enchant GM command.
+    uint32_t GM_CMD_LVL_ENCHANT;
+    /// Required user level for the @enemy GM command.
+    uint32_t GM_CMD_LVL_ENEMY;
+    /// Required user level for the @event GM command.
+    uint32_t GM_CMD_LVL_EVENT;
+    /// Required user level for the @expertisemax GM command.
+    uint32_t GM_CMD_LVL_EXPERTISE_EXTEND;
+    /// Required user level for the @expertise GM command.
+    uint32_t GM_CMD_LVL_EXPERTISE_SET;
+    /// Required user level for the @familiarity GM command.
+    uint32_t GM_CMD_LVL_FAMILIARITY;
+    /// Required user level for the @flag GM command.
+    uint32_t GM_CMD_LVL_FLAG;
+    /// Required user level for the @fgauge GM command.
+    uint32_t GM_CMD_LVL_FUSION_GAUGE;
+    /// Required user level for the @goto GM command.
+    uint32_t GM_CMD_LVL_GOTO;
+    /// Required user level for the @gp GM command.
+    uint32_t GM_CMD_LVL_GRADE_POINTS;
+    /// Required user level for the @help GM command.
+    uint32_t GM_CMD_LVL_HELP;
+    /// Required user level for the @homepoint GM command.
+    uint32_t GM_CMD_LVL_HOMEPOINT;
+    /// Required user level for the @instance GM command.
+    uint32_t GM_CMD_LVL_INSTANCE;
+    /// Required user level for the @item GM command.
+    uint32_t GM_CMD_LVL_ITEM;
+    /// Required user level for the @kick GM command.
+    uint32_t GM_CMD_LVL_KICK;
+    /// Required user level for the @kill GM command.
+    uint32_t GM_CMD_LVL_KILL;
+    /// Required user level for the @levelup GM command.
+    uint32_t GM_CMD_LVL_LEVEL_UP;
+    /// Required user level for the @lnc GM command.
+    uint32_t GM_CMD_LVL_LNC;
+    /// Required user level for the @map GM command.
+    uint32_t GM_CMD_LVL_MAP;
+    /// Required user level for the @online GM command.
+    uint32_t GM_CMD_LVL_ONLINE;
+    /// Required user level for the @penalty GM command.
+    uint32_t GM_CMD_LVL_PENALTY_RESET;
+    /// Required user level for the @plugin GM command.
+    uint32_t GM_CMD_LVL_PLUGIN;
+    /// Required user level for the @pos GM command.
+    uint32_t GM_CMD_LVL_POSITION;
+    /// Required user level for the @post GM command.
+    uint32_t GM_CMD_LVL_POST;
+    /// Required user level for the @reported GM command.
+    uint32_t GM_CMD_LVL_REPORTED;
+    /// Required user level for the @resolve GM command.
+    uint32_t GM_CMD_LVL_RESOLVE;
+    /// Required user level for the @reunion GM command.
+    uint32_t GM_CMD_LVL_REUNION;
+    /// Required user level for the @quest GM command.
+    uint32_t GM_CMD_LVL_QUEST;
+    /// Required user level for the @scrap GM command.
+    uint32_t GM_CMD_LVL_SCRAP;
+    /// Required user level for the @skill GM command.
+    uint32_t GM_CMD_LVL_SKILL;
+    /// Required user level for the @skillpoint GM command.
+    uint32_t GM_CMD_LVL_SKILL_POINT;
+    /// Required user level for the @slotadd GM command.
+    uint32_t GM_CMD_LVL_SLOT_ADD;
+    /// Required user level for the @sp GM command.
+    uint32_t GM_CMD_LVL_SOUL_POINTS;
+    /// Required user level for the @spawn GM command.
+    uint32_t GM_CMD_LVL_SPAWN;
+    /// Required user level for the @speed GM command.
+    uint32_t GM_CMD_LVL_SPEED;
+    /// Required user level for the @spirit GM command.
+    uint32_t GM_CMD_LVL_SPIRIT;
+    /// Required user level for the @support GM command.
+    uint32_t GM_CMD_LVL_SUPPORT;
+    /// Required user level for the @tickermessage GM command.
+    uint32_t GM_CMD_LVL_TICKER_MESSAGE;
+    /// Required user level for the @title GM command.
+    uint32_t GM_CMD_LVL_TITLE;
+    /// Required user level for the @tokusei GM command.
+    uint32_t GM_CMD_LVL_TOKUSEI;
+    /// Required user level for the @valuable GM command.
+    uint32_t GM_CMD_LVL_VALUABLE;
+    /// Required user level for the @worldtime GM command.
+    uint32_t GM_CMD_LVL_WORLD_TIME;
+    /// Required user level for the @ziotite GM command.
+    uint32_t GM_CMD_LVL_ZIOTITE;
+    /// Required user level for the @zone GM command.
+    uint32_t GM_CMD_LVL_ZONE;
+    /// Required user level for the @xp GM command.
+    uint32_t GM_CMD_LVL_XP;
 };
 
 public:

@@ -27,6 +27,8 @@
 #include "Packets.h"
 
 // libcomp Includes
+#include <DefinitionManager.h>
+#include <ManagerPacket.h>
 #include <Packet.h>
 #include <PacketCodes.h>
 
@@ -34,7 +36,7 @@
 #include <CharacterProgress.h>
 
 // channel Includes
-#include "ChannelClientConnection.h"
+#include "ChannelServer.h"
 
 using namespace channel;
 
@@ -42,12 +44,14 @@ bool Parsers::ITimeData::Parse(libcomp::ManagerPacket *pPacketManager,
     const std::shared_ptr<libcomp::TcpConnection>& connection,
     libcomp::ReadOnlyPacket& p) const
 {
-    (void)pPacketManager;
-
     if(p.Size() != 0)
     {
         return false;
     }
+
+    auto server = std::dynamic_pointer_cast<ChannelServer>(
+        pPacketManager->GetServer());
+    auto definitionManager = server->GetDefinitionManager();
 
     auto client = std::dynamic_pointer_cast<ChannelClientConnection>(
         connection);
@@ -63,11 +67,13 @@ bool Parsers::ITimeData::Parse(libcomp::ManagerPacket *pPacketManager,
 
     if(progress)
     {
-        reply.WriteS8((int8_t)progress->ITimePointsCount());
-        for(auto& pair : progress->GetITimePoints())
+        auto houraiData = definitionManager->GetCHouraiData();
+
+        reply.WriteS8((int8_t)houraiData.size());
+        for(auto& pair : houraiData)
         {
-            reply.WriteS8(pair.first);  // NPC ID
-            reply.WriteS16Little(pair.second);  // Points
+            reply.WriteS8(pair.first);
+            reply.WriteS16Little(progress->GetITimePoints(pair.first));
         }
     }
 

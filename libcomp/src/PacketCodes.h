@@ -75,6 +75,7 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_POPULATE_ZONE = 0x0019,  //!< Request to populate a zone with game objects and entities.
     PACKET_MOVE = 0x001C,  //!< Request to move an entity or object.
     PACKET_PIVOT = 0x0020,  //!< Request to stop a player entity in place for a set amount of time.
+    PACKET_SYNC_TIME = 0x0024,  //!< Unused. Request to (re-)sync the client and server times.
     PACKET_CHAT = 0x0026, //!< Request to add a message to the chat or process a GM command.
     PACKET_TELL = 0x0027, //!< Request to send a chat message to a specific player in the world.
     PACKET_SKILL_ACTIVATE = 0x0030, //!< Request to activate a player or demon skill.
@@ -191,6 +192,9 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_SKILL_FORGET = 0x0186,   //!< Request to forget a specific character skill.
     PACKET_BAZAAR_MARKET_END = 0x0188,  //!< Request to stop interacting with a bazaar market.
     PACKET_BAZAAR_MARKET_COMMENT = 0x018B,  //!< Request to update the player's bazaar market comment.
+    PACKET_PARTY_RECRUIT_REPLY = 0x018F,    //!< Request replying to a party recruit notification.
+    PACKET_PARTY_RECRUIT = 0x0192,  //!< Request to add a party member who replied to a recruit notification.
+    PACKET_STATUS_ICON = 0x0194,    //!< Request to temporarily change the player character's overhead icon.
     PACKET_MAP_FLAG = 0x0197,  //!< Request to receive map information.
     PACKET_ANALYZE_DEMON = 0x0199,  //!< Request to analyze another player's partner demon.
     PACKET_DEMON_COMPENDIUM = 0x019B,  //!< Request for the Demon Compendium.
@@ -208,6 +212,7 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_ENCHANT = 0x01C1,    //!< Request to perform an enchantment.
     PACKET_DUNGEON_RECORDS = 0x01C4,  //!< Request for the current player's dungeon challenge records.
     PACKET_ANALYZE_DUNGEON_RECORDS = 0x01C6,  //!< Request for a different player's dungeon challenge records.
+    PACKET_ITEM_PROMO = 0x01C9, //!< Request to submit an item promo code.
     PACKET_TRIFUSION_JOIN = 0x01CD, //!< Request to join a tri-fusion session in progress.
     PACKET_TRIFUSION_DEMON_UPDATE = 0x01D0, //!< Request to update the demons involved in a tri-fusion.
     PACKET_TRIFUSION_REWARD_UPDATE = 0x01D3,    //!< Request to update the rewards given for a tri-fusion success.
@@ -243,22 +248,39 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_DEMON_QUEST_CANCEL = 0x022B,    //!< Request to cancel the active demon quest.
     PACKET_DEMON_QUEST_LIST = 0x022D,  //!< Request for the player's partner demon quest list.
     PACKET_DEMON_QUEST_ACTIVE = 0x022F,  //!< Request for information about the active demon quest.
-    PACKET_UNSUPPORTED_0232 = 0x0232,  //!< Unknown. Requested at start up. Contains character name and client side flags.
+    PACKET_PLAYER_SETTINGS = 0x0232,  //!< Contains character confirmation and client graphics settings.
     PACKET_DEMON_LOCK = 0x0233,  //!< Request to lock or unlock a demon in the COMP.
     PACKET_DEMON_REUNION = 0x0235,  //!< Request to reunion the summoned partner demon.
     PACKET_DEMON_QUEST_REJECT = 0x023A,   //!< Request to reject a pending demon quest.
+    PACKET_PVP_CONFIRM = 0x023E,    //!< Request to confirm a PvP match queue invitation.
+    PACKET_PVP_BASE_CAPTURE = 0x0242,   //!< Request to start capturing a PvP base.
+    PACKET_PVP_BASE_LEAVE = 0x0247, //!< Request to stop capturing a PvP base.
+    PACKET_PVP_JOIN = 0x0249,   //!< Request to join a PvP match queue.
+    PACKET_PVP_CANCEL = 0x024B, //!< Request to quit the current PvP match queue.
     PACKET_PVP_CHARACTER_INFO = 0x024D,  //!< Request for PvP character information.
+    PACKET_PVP_WORLD = 0x024F,  //!< Unused. Request for some sort of PvP world information.
     PACKET_AUTO_RECOVERY_UPDATE = 0x025A,   //!< Request to update the character's auto-recovery settings.
     PACKET_ITEM_MIX = 0x025D,   //!< Request to mix two items into a different result item.
     PACKET_BIKE_BOOST_ON = 0x0260,  //!< Request to start boosting on a bike.
     PACKET_BIKE_BOOST_OFF = 0x0262, //!< Request to stop boosting on a bike.
     PACKET_BIKE_DISMOUNT = 0x0264,  //!< Request to dismount from a bike.
+    PACKET_TEAM_FORM = 0x0267,  //!< Request to form a new team.
+    PACKET_TEAM_INVITE = 0x0269,    //!< Request to invite a player to join the player's team.
+    PACKET_TEAM_ANSWER = 0x026C,    //!< Request to either accept or reject a team invite.
+    PACKET_TEAM_KICK = 0x0270,  //!< Request to kick a player from the player's team.
+    PACKET_TEAM_LEADER_UPDATE = 0x0273, //!< Request to update the player's current team leader.
+    PACKET_TEAM_LEAVE = 0x0276, //!< Request to have the player leave their current team.
+    PACKET_TEAM_CHAT = 0x0279,  //!< Request to send a team channel chat message.
     PACKET_TEAM_INFO = 0x027B,  //!< Request for the current player's team information.
+    PACKET_TEAM_MEMBER_LIST = 0x027D,   //!< Request to list all members in the player's team.
+    PACKET_TEAM_INFO_UPDATE = 0x027F,   //!< Unused. Request to update some type of player team info.
     PACKET_EQUIPMENT_SPIRIT_FUSE = 0x0287,  //!< Request to perform equipment spirit fusion.
     PACKET_RECEIVED_PLAYER_DATA = 0x028C,  //!< Empty message sent after character/demon data requested have been received.
     PACKET_RECEIVED_LISTS = 0x028E,  //!< Empty message sent after setup lists requested have been received.
     PACKET_DEMON_QUEST_PENDING = 0x028F,  //!< Request to re-send a pending demon quest.
     PACKET_ITEM_DEPO_REMOTE = 0x0296,  //!< Request to open the remote item depos.
+    PACKET_DIASPORA_BASE_CAPTURE = 0x02C4,  //!< Request to capture a Diaspora instance base.
+    PACKET_DIASPORA_ENTER = 0x02C7, //!< Request to enter a Diaspora instance after team establishment.
     PACKET_DEMON_DEPO_REMOTE = 0x02EF,  //!< Request to open the remote demon depo.
     PACKET_COMMON_SWITCH_UPDATE = 0x02F2,   //!< Request to update character common switches.
     PACKET_COMMON_SWITCH_INFO = 0x02F4,  //!< Request for character common switch settings.
@@ -267,6 +289,12 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_CASINO_COIN_TOTAL = 0x02FA,   //!< Request for the current character's casino coin total.
     PACKET_TRIFUSION_SOLO = 0x0384, //!< Request to perform a solo tri-fusion.
     PACKET_EQUIPMENT_SPIRIT_DEFUSE = 0x0386,  //!< Request to reverse equipment spirit fusion.
+    PACKET_DEMON_FORCE_END = 0x0389,  //!< Request to complete demon force changes.
+    PACKET_UB_SPECTATE_PLAYER = 0x038F, //!< Request to spectate a target character in a UB match.
+    PACKET_UB_PROCEED = 0x0392, //!< Request to proceed past a UB round result display.
+    PACKET_UB_LEAVE = 0x0394,   //!< Request to leave a UB instance prematurely.
+    PACKET_UB_LOTTO_CANCEL = 0x0398,    //!< Request to cancel the client's UB lotto queue entry.
+    PACKET_UB_LOTTO_JOIN = 0x039A,  //!< Request to create a UB lotto queue entry.
     PACKET_SEARCH_ENTRY_INFO = 0x03A3,  //!< Request for the current player's search entries.
     PACKET_ITIME_DATA = 0x03A5,    //!< Request for the current player's I-Time data.
     PACKET_ITIME_TALK = 0x03A9,    //!< Request to start or continue an I-Time conversation.
@@ -277,21 +305,40 @@ enum class ClientToChannelPacketCode_t : uint16_t
     PACKET_CULTURE_END = 0x03B6,  //!< Request to end interaction with a culture machine.
     PACKET_EQUIPMENT_MOD_EDIT = 0x03CB,  //!< Request to edit a previously applied equipment modification.
     PACKET_PATTRIBUTE_DEADLINE = 0x03EA, //!< Request for the next punitive attribute deadline.
+    PACKET_MISSION_LEAVE = 0x03ED,  //!< Request to leave a Mission instance.
+    PACKET_GAME_OVER = 0x03EF,  //!< Unknown. Request to end some type of match (possibly depracated).
+    PACKET_MITAMA_REUNION = 0x03F1,   //!< Request to perform a mitama reunion reinforcement.
+    PACKET_MITAMA_RESET = 0x03F3, //!< Request to reset a mitama reunion growth path.
     PACKET_DEMON_DEPO_LIST = 0x03F5,  //!< Request to list the client account's demon depositories.
-    PACKET_DEMON_FORCE_END = 0x0389,  //!< Request to complete demon force changes.
     PACKET_DEMON_EQUIP = 0x03FB, //!< Request to change demon equipment.
     PACKET_BARTER = 0x03FE, //!< Request to process the results of an NPC barter.
+    PACKET_PENTALPHA_DATA = 0x0400, //!< Request for the current world and character Pentalpha data.
     PACKET_QUEST_TITLE = 0x0406,  //!< Request to obtain a quest bonus title.
     PACKET_REPORT_PLAYER = 0x0407,  //!< Request report a player for abuse.
     PACKET_BLACKLIST = 0x0408,  //!< Request for the current player's blacklist.
     PACKET_BLACKLIST_UPDATE = 0x040A,  //!< Request to update the current player's blacklist.
+    PACKET_DESTINY_BOX_DATA = 0x040D,   //!< Request for Destiny box data.
+    PACKET_DESTINY_LOTTO = 0x0410,  //!< Request to start a Destiny box item lotto.
     PACKET_DIGITALIZE_POINTS = 0x0414,  //!< Request for the current player's digitalize point information.
     PACKET_DIGITALIZE_ASSIST = 0x0418,  //!< Request for the current player's digitalize assist information.
+    PACKET_DIGITALIZE_ASSIST_LEARN = 0x041A,    //!< Request to learn a digitalize assist skill.
+    PACKET_DIGITALIZE_ASSIST_REMOVE = 0x041C,   //!< Request to remove an active digitalize assist skill.
     PACKET_VA_BOX = 0x041E, //!< Request to list all VA items in the VA closet.
     PACKET_VA_BOX_ADD = 0x0420, //!< Request to create a VA item and add it to the closet.
     PACKET_VA_BOX_REMOVE = 0x0422,  //!< Request to remove a VA item from the closet.
     PACKET_VA_CHANGE = 0x0424,  //!< Request to change the current character's VA.
     PACKET_VA_BOX_MOVE = 0x0427,    //!< Request to move a VA item in the closet.
+    PACKET_REUNION_POINTS = 0x0432, //!< Request to retrieve the player's reunion conversion points.
+    PACKET_REUNION_EXTRACT = 0x0434,    //!< Request to extract reunion conversion points from a demon.
+    PACKET_REUNION_INJECT = 0x0436, //!< Request to inject reunion conversion points into a demon.
+    PACKET_UNUSED_FFEB = 0xFFEB,    //!< Unused and never seen, possibly a debug packet.
+    PACKET_UNUSED_FFEC = 0xFFEC,    //!< Unused and never seen, possibly a debug packet.
+    PACKET_UNUSED_FFED = 0xFFED,    //!< Unused and never seen, possibly a debug packet.
+
+    //
+    // Custom Packets (Amala Network)
+    //
+    PACKET_AMALA_REQ_ACCOUNT_DUMP = 0x1000,  //!< Request a dump of the account data.
 };
 
 /**
@@ -315,6 +362,8 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_SHOW_ENTITY = 0x001A,  //!< Message to display a game entity.
     PACKET_REMOVE_ENTITY = 0x001B,  //!< Message to remove a game entity.
     PACKET_MOVE = 0x001D,  //!< Message containing entity or object movement information.
+    PACKET_KNOCK_BACK = 0x001E,   //!< Unused. Skill independent post-skill entity knock back effect.
+    PACKET_STIFFEN_OBJECT = 0x001F, //!< Unused. Skill independent post-skill entity "stiffness" effect.
     PACKET_FIX_POSITION = 0x0021,  //!< Message forcing an entity to stay in a set location for a set time.
     PACKET_WARP = 0x0022,  //!< Message containing entity or object warping information.
     PACKET_ZONE_CHANGE = 0x0023,  //!< Information about a character's zone.
@@ -353,6 +402,7 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_PARTNER_SUMMONED = 0x0060,  //!< Notifies the client that a partner demon has been summoned.
     PACKET_POP_ENTITY_FOR_PRODUCTION = 0x0061,  //!< Sets up an entity that will spawn in via PACKET_SHOW_ENTITY.
     PACKET_CHANNEL_LIST = 0x0064,  //!< Message containing the list of channels connected to the world.
+    PACKET_CHANNEL_CHANGE = 0x0066, //!< Response to the request to change channels.
     PACKET_REVIVE_ENTITY = 0x006E,  //!< Notification that an entity has been revived.
     PACKET_STOP_MOVEMENT = 0x0070,  //!< Message containing entity or object movement stopping information.
     PACKET_WORLD_TIME = 0x0073,  //!< Response for the server's current world time.
@@ -414,12 +464,12 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_PARTY_MEMBER_PARTNER = 0x00E8,  //!< Notification containing a parter demon's info in the current party.
     PACKET_PARTY_MEMBER_ZONE = 0x00E9,  //!< Notification that a current party member has moved to a different zone.
     PACKET_PARTY_MEMBER_ICON = 0x00EA,  //!< Notification that a current party member's icon state has changed.
+    PACKET_PARTY_KICK = 0x00EC,  //!< Notification that a player has been kicked from the current party.
     PACKET_DEMON_FUSION = 0x00F0,  //!< Response containing the results of a two-way fusion.
     PACKET_LOOT_DEMON_EGG_DATA = 0x00F2,    //!< Response to the request for information about the demon in a demon egg.
+    PACKET_SYNC = 0x00F4,  //!< Response containing the server time.
     PACKET_ERROR_FRIEND = 0x00F5,   //!< Notification that a friend request packet has failed.
     PACKET_SHOP_REPAIR = 0x00F7,    //!< Response to the request to repair an item at a shop.
-    PACKET_PARTY_KICK = 0x00EC,  //!< Notification that a player has been kicked from the current party.
-    PACKET_SYNC = 0x00F4,  //!< Response containing the server time.
     PACKET_ROTATE = 0x00F9,    //!< Message containing entity or object rotation information.
     PACKET_RUN_SPEED = 0x00FB,    //!< Message containing an entity's updated running speed.
     PACKET_LOOT_BOSS_BOX = 0x00FD,  //!< Response to the request for the list of items inside a boss loot box.
@@ -433,6 +483,8 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_QUEST_COMPLETED_LIST = 0x010E,  //!< Response containing the player's completed quest list.
     PACKET_QUEST_PHASE_UPDATE = 0x010F,    //!< Notification that a quest's phase has been updated.
     PACKET_QUEST_KILL_COUNT_UPDATE = 0x0110,    //!< Notification that a quest's kill counts have been updated.
+    PACKET_QUEST_LIST_START = 0x0111,   //!< Deprecated signifier that a list of quests is being sent to the client.
+    PACKET_QUEST_LIST_END = 0x0112, //!< Deprecated signifier that a list of quests has finished being sent to the client.
     PACKET_BAZAAR_MARKET_OPEN = 0x0114, //!< Response to the request to open a market at a bazaar.
     PACKET_BAZAAR_MARKET_CLOSE = 0x0116,    //!< Notification (and response) to close the player's current open bazaar market.
     PACKET_BAZAAR_MARKET_INFO = 0x0118, //!< Message containing details about a specific bazaar market.
@@ -475,6 +527,7 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_ITEM_PRICE = 0x0158, //!< Response containing an item price estimate based off several criteria.
     PACKET_COMM_SERVER_STATE = 0x015A, //!< Notification of the client state relative to the "comm server" (world).
     PACKET_EVENT_DIRECTION = 0x015D,  //!< Request to the client to signify a direction to the player.
+    PACKET_TROPHY_PENALTY = 0x015E, //!< Unused. Notification that a player has received an "anti-monopoly" drop demerit.
     PACKET_BAZAAR_STATE = 0x0160,   //!< Response to the request for the current zone's bazaar cost and duration.
     PACKET_BAZAAR_CLERK_SET = 0x0162,   //!< Response to the request to set the player's bazaar clerk NPC.
     PACKET_BAZAAR_SOLD_OUT = 0x0163,    //!< Unknown. Notification (to?) that all items have sold out for a bazaar market.
@@ -483,14 +536,18 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_CLAN_NAME_UPDATED = 0x0169,  //!< Notification that a character's clan name has updated.
     PACKET_SKILL_EXECUTED_INSTANT = 0x016C,  //!< Notification that a skill is executing, bypassing normal activation.
     PACKET_RESET_SKILL_POINTS = 0x0170, //!< Notification that the player character's skill points have been reset.
-    PACKET_SYSTEM_MSG = 0x0171, //!< Message containing announcement ticker data. 
+    PACKET_SYSTEM_MSG = 0x0171, //!< Message containing announcement ticker data.
     PACKET_SYNC_CHARACTER = 0x017F,  //!< Response to the request to sync a client entity's basic information.
+    PACKET_ASSORT_DEVELOP = 0x0180, //!< Unknown. Your guess is as good as mine.
     PACKET_COMP_SIZE_UPDATED = 0x0182,  //!< Notifies the client that their COMP size has changed.
     PACKET_BAZAAR_DATA = 0x0183,  //!< Message containing data about a bazaar in a zone.
     PACKET_BAZAAR_NPC_CHANGED = 0x0185, //!< Notification that a bazaar market clerk NPC has changed.
     PACKET_SKILL_LIST_UPDATED = 0x0187, //!< Notification that a player's skill list has been updated.
     PACKET_BAZAAR_MARKET_COMMENT = 0x018C,  //!< Response to the request to update the player's bazaar market comment.
     PACKET_CONTRACT_COMPLETED = 0x018D,  //!< Notification that a player has contracted a demon from a demon egg.
+    PACKET_PARTY_RECRUIT_REPLY = 0x0190, //!< Response to the request replying to a party recruit notification.
+    PACKET_PARTY_RECRUIT_REPLIED = 0x0191,  //!< Notification that a player has replied to the client's party recruit notification.
+    PACKET_PARTY_RECRUIT = 0x0193,  //!< Response to the request to add a party member who replied to a recruit notification.
     PACKET_STATUS_ICON = 0x0195,  //!< Message containing the icon to show for the client's character.
     PACKET_STATUS_ICON_OTHER = 0x0196,  //!< Message containing the icon to show for another player's character.
     PACKET_MAP_FLAG = 0x0198,  //!< Message containing map information.
@@ -502,6 +559,7 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_APPEARANCE_ALTER = 0x01A3,   //!< Response to the request from the client to alter the appearance of the character.
     PACKET_APPEARANCE_ALTERED = 0x01A4, //!< Notification that a character has altered their appearance.
     PACKET_DEMON_FAMILIARITY_UPDATE = 0x01A5,  //!< Notification that the current partner demon's familiarity has updated.
+    PACKET_TIME_TRIAL_START = 0x01A6,   //!< Unused. Notification that a time trial has started (replaced by update).
     PACKET_TIME_TRIAL_UPDATE = 0x01A7,  //!< Notification that a time trial zone instance has been entered.
     PACKET_TIME_TRIAL_END = 0x01A8,     //!< Notification that a time trial zone instance has ended.
     PACKET_TIME_TRIAL_REPORT = 0x01A9,  //!< Notification that a time trial record has been turned in.
@@ -524,6 +582,7 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_DUNGEON_CHALLENGES = 0x01C5,  //!< Response containing the current player's dungeon challenge records.
     PACKET_ANALYZE_DUNGEON_RECORDS = 0x01C7,  //!< Response to the request for a different player's dungeon challenge records.
     PACKET_DUNGEON_RECORDS_UPDATE = 0x01C8,   //!< Notification that the player's dungeon challenge records have been updated.
+    PACKET_ITEM_PROMO = 0x01CA, //!< Response to the request to submit an item promo code.
     PACKET_TRIFUSION_STARTED = 0x01CB,  //!< Notification that a party member in the same zone has started a tri-fusion session.
     PACKET_TRIFUSION_START = 0x01CC,    //!< Request to the client to start a tri-fusion session.
     PACKET_TRIFUSION_JOIN = 0x01CE, //!< Response to the request to join a tri-fusion session in progress.
@@ -589,13 +648,30 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_DEMON_QUEST_CANCEL = 0x022C,    //!< Response to the request to cancel the active demon quest.
     PACKET_DEMON_QUEST_LIST = 0x022E,   //!< Response containing the player's partner demon quest list.
     PACKET_DEMON_QUEST_ACTIVE = 0x0230,  //!< Response to the request for information about the active demon quest.
+    PACKET_ITEM_DISTRIBUTION = 0x0231,  //!< Notification that the client has received items in their post from some source.
     PACKET_DEMON_LOCK = 0x0234,  //!< Response to lock a demon in the COMP.
     PACKET_DEMON_REUNION = 0x0236,  //!< Response to the request to reunion the summoned partner demon.
     PACKET_LEVEL_UP_CONGRATS = 0x0238,  //!< Request to display a "congratulations" message from the partner demon during levelup.
     PACKET_PARTNER_LEVEL_DOWN = 0x0239, //!< Notifies the client that a partner demon has leveled down.
     PACKET_DEMON_QUEST_REJECT = 0x023B,   //!< Response to the request to reject a pending demon quest.
     PACKET_RANDOM_BOX = 0x023C,  //!< Notification that a player entity has opened a random item box.
+    PACKET_PVP_READY = 0x023D,  //!< Notification that the player has been matched in PvP and is requesting confirmation.
+    PACKET_PVP_CONFIRM = 0x023F,    //!< Response to the request to confirm a PvP match queue invitation.
+    PACKET_PVP_START = 0x0240,  //!< Message containing PvP match data for the current instance with all current players.
+    PACKET_PVP_BASE_DATA = 0x0241,  //!< Mesage containing data about a PvP base in the zone.
+    PACKET_PVP_BASE_CAPTURE = 0x0243,   //!< Response to the request to start capturing a PvP base.
+    PACKET_PVP_BASE_CAPTURED = 0x0244,  //!< Notification that a PvP base is currently being captured.
+    PACKET_PVP_POINTS = 0x0245, //!< Notification that the PvP match points have been updated.
+    PACKET_PVP_RESULT = 0x0246, //!< Message containing the results of a complete PvP match.
+    PACKET_PVP_BASE_LEFT = 0x0248,  //!< Notification that a player has stopped capturing a PvP base.
+    PACKET_PVP_JOIN = 0x024A,   //!< Response to the request of a solo player or team lead to enter the PvP queue.
+    PACKET_PVP_CANCEL = 0x024C, //!< Response to the request of a solo player or team lead to leave the PvP queue.
     PACKET_PVP_CHARACTER_INFO = 0x024E,  //!< Response containing PvP character information.
+    PACKET_PVP_WORLD = 0x0250,  //!< Unused. Response to the request for some sort of PvP world information.
+    PACKET_CHANNEL_CHANGED = 0x0251,    //!< Notification that the client will be moved from their channel to another.
+    PACKET_PVP_PLAYER = 0x0252, //!< Notification that a player has either entered or left the PvP match.
+    PACKET_BP_UPDATE = 0x0258,  //!< Notification that the player's current or total BP amount has been updated.
+    PACKET_PVP_ENTRY_COUNT = 0x0259,    //!< Notification that the current PvP queue entry count has changed.
     PACKET_AUTO_RECOVERY_UPDATE = 0x025B,   //!< Response to the request to update the character's auto-recovery settings.
     PACKET_AUTO_RECOVERY = 0x025C,  //!< Message containing the current character's auto-recovery settings.
     PACKET_ITEM_MIX = 0x025E,   //!< Response to the request to mix two items into a different result item.
@@ -603,12 +679,32 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_BIKE_BOOST_ON = 0x0261,  //!< Response to the request to start boosting on a bike.
     PACKET_BIKE_BOOST_OFF = 0x0263, //!< Response to the request to stop boosting on a bike.
     PACKET_BIKE_DISMOUNT = 0x0265,  //!< Response to the request to dismount from a bike.
+    PACKET_TEAM_FORM = 0x0268,  //!< Response to the request to form a new team.
+    PACKET_TEAM_INVITE = 0x026A,    //!< Response to the request to invite a player to join the player's team.
+    PACKET_TEAM_INVITED = 0x026B,   //!< Notification that the player has been invited to join a team.
+    PACKET_TEAM_ANSWER = 0x026D,    //!< Response to the request to either accept or reject a team invite.
+    PACKET_TEAM_ANSWERED = 0x026E,  //!< Notification that a player has either accepted or rejected a team invite.
+    PACKET_TEAM_MEMBER_ADD = 0x026F,    //!< Notification that a player has been added to the current team.
+    PACKET_TEAM_KICK = 0x0271,  //!< Response to the request to kick a player from the player's team.
+    PACKET_TEAM_KICKED = 0x0272,    //!< Notification that the player has been kicked from their team.
+    PACKET_TEAM_LEADER_UPDATE = 0x0274, //!< Response to the request to update the player's current team leader.
+    PACKET_TEAM_LEADER_UPDATED = 0x0275,    //!< Notification that the player's current team leader has changed.
+    PACKET_TEAM_LEAVE = 0x0277, //!< Response to the request to have the player leave their current team.
+    PACKET_TEAM_LEFT = 0x0278,  //!< Notification that a player has left the current team.
+    PACKET_TEAM_CHAT = 0x027A,  //!< Chat message sent from a member of the same team.
     PACKET_TEAM_INFO = 0x027C,  //!< Response containing the current player's team information.
+    PACKET_TEAM_MEMBER_LIST = 0x027E,   //!< Response to the request to list all members in the player's team.
+    PACKET_TEAM_INFO_UPDATE = 0x0280,   //!< Unused. Response to the request to update some type of player team info.
+    PACKET_TEAM_INFO_UPDATED = 0x0281,  //!< Unused. Notification that a player's team info has been updated.
+    PACKET_PVP_TEAM_JOIN = 0x0283,  //!< Notification that the player's current team has entered a PvP queue.
+    PACKET_PVP_TEAM_CANCEL = 0x0284,    //!< Notification that the player's current team has left a PvP queue.
+    PACKET_ITEM_XP = 0x0286,    //!< Notification that the client character has gained XP from a special item.
     PACKET_EQUIPMENT_SPIRIT_FUSE = 0x0288, //!< Response to the request to perform equipment spirit fusion.
     PACKET_EQUIPMENT_SPIRIT_FUSED = 0x028B,   //!< Notification that equipment spirit fusion was performed.
     PACKET_EVENT_MULTITALK = 0x028D,  //!< Request to the client to start a multitalk event.
     PACKET_DEMON_QUEST_PENDING = 0x0290,  //!< Response to the request to re-send a pending demon quest.
     PACKET_EVENT_GET_ITEMS = 0x0291,  //!< Request to the client to inform the player that a items have been obtained.
+    PACKET_ERROR_MISC = 0x0293, //!< Unused. MIscellaneous operation error handler.
     PACKET_EVENT_PLAY_BGM = 0x0294,   //!< Request to the client to play background music as part of an event.
     PACKET_EVENT_STOP_BGM = 0x0295,   //!< Request to the client to stop playing specific background music as part of an event.
     PACKET_ITEM_DEPO_REMOTE = 0x0297,  //!< Response to the request to open the remote item depos.
@@ -616,6 +712,19 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_DEMON_SOLO_UPDATE = 0x029C,  //!< Notification that the client is in a demon only zone istance.
     PACKET_DEMON_SOLO_END = 0x029D,     //!< Notification that the client's demon only challenge has ended.
     PACKET_DEMON_SOLO_DEATH_TIME = 0x029E,  //!< Notification containing a player in a demon only dungeon's death time-out.
+    PACKET_DIASPORA_TIME = 0x02BC,  //!< Message containing current Diaspora instance time info.
+    PACKET_DIASPORA_END = 0x02BD,   //!< Notification that the current Diaspora instance has ended.
+    PACKET_DIASPORA_PHASE = 0x02BE, //!< Message containing the current Diaspora match phase.
+    PACKET_DIASPORA_MEMBER = 0x02BF,    //!< Message containing all Diaspora member information.
+    PACKET_DIASPORA_STATUS = 0x02C0,    //!< Message containing information about the current Diaspora match state.
+    PACKET_DIASPORA_BASE_DATA = 0x02C1, //!< Message containing Diaspora base information.
+    PACKET_DIASPORA_BASE_INFO = 0x02C2, //!< Message containing a list of all bases in a Diaspora instance.
+    PACKET_DIASPORA_BASE_STATUS = 0x02C3,   //!< Notification that a Diaspora base has been captured or reset.
+    PACKET_DIASPORA_BASE_CAPTURE = 0x02C5,  //!< Response to the request to capture a Diaspora instance base.
+    PACKET_DIASPORA_TEAM_READY = 0x02C6,    //!< Notification that a Diaspora team is ready to enter the instance.
+    PACKET_DIASPORA_ENTER = 0x02C8, //!< Response to the request to enter a Diaspora instance after team establishment.
+    PACKET_DIASPORA_QUAKE = 0x02CB, //!< Notification that a Diaspora Quake skill is being used.
+    PACKET_TEAM_DISBAND = 0x02EE,   //!< Notification that the player's current team has been disbanded.
     PACKET_DEMON_DEPO_REMOTE = 0x02F0,  //!< Response to the request to open the remote demon depos.
     PACKET_EXPERTISE_EXTENSION = 0x02F1, //!< Notification of the client character's extertise extension count.
     PACKET_COMMON_SWITCH_UPDATE = 0x02F3,   //!< Response to request to update character common switches.
@@ -627,6 +736,20 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_EQUIPMENT_SPIRIT_DEFUSE = 0x0387, //!< Response to the request to reverse equipment spirit fusion.
     PACKET_DEMON_FORCE_GAUGE = 0x0388,  //!< Notification that the demon force benefit gauge has been filled.
     PACKET_DEMON_FORCE_END = 0x038A,  //!< Request to close the demon force menu.
+    PACKET_UB_PHASE = 0x038B,   //!< Message containing the current UB phase.
+    PACKET_UB_STATE = 0x038C,   //!< Message containing the current state of an UB match.
+    PACKET_UB_MEMBERS = 0x038D, //!< Message containing all current UB participants.
+    PACKET_UB_MEMBER_STATE = 0x038E,    //!< Message containing details about UB parcipants' states.
+    PACKET_UB_SPECTATE_PLAYER = 0x0390, //!< Response to the request to spectate a target character in a UB match.
+    PACKET_UB_RESULT = 0x0391,  //!< Notification containing the result of an UB round.
+    PACKET_UB_RANKING = 0x0393, //!< Message containing the current world and character UB rankings.
+    PACKET_UB_LEAVE = 0x0395,   //!< Response to the request to leave a UB instance prematurely.
+    PACKET_UB_LOTTO_UPDATE = 0x0396,    //!< Notification that the current zone's UB lotto has updated.
+    PACKET_UB_LOTTO_STATUS = 0x0397,    //!< Notification that the player has entered a UB lotto queue.
+    PACKET_UB_LOTTO_RESULT = 0x0399,    //!< Notification that the player has either been accepted or rejected from a UB lotto.
+    PACKET_UB_LOTTO_JOIN = 0x039B,  //!< Response to the request to create a UB lotto queue entry.
+    PACKET_UB_RECRUIT = 0x039C, //!< Notification that UB lotto recruiting will start soon.
+    PACKET_UB_RECRUIT_START = 0x039D,   //!< Notification that UB lotto recruiting has started.
     PACKET_SEARCH_ENTRY_INFO = 0x03A4,  //!< Response containing the current player's search entries.
     PACKET_ITIME_DATA = 0x03A6,  //!< Response containing the current player's I-Time data.
     PACKET_ITIME_UPDATE = 0x03A7,  //!< Notification that an I-Time NPC's point value has updated.
@@ -640,25 +763,62 @@ enum class ChannelToClientPacketCode_t : uint16_t
     PACKET_CULTURE_COMPLETE = 0x03B4,  //!< Notification that the current player's culture item is done.
     PACKET_CULTURE_RESULT = 0x03B5,  //!< Message containing information about an culture item being picked up.
     PACKET_CULTURE_END = 0x03B7,  //!< Response to the request to end interaction with a culture machine.
+    PACKET_SKILL_STATE = 0x03B8,    //!< Unused. Mysterious redundant notification that the player has certain skills available.
     PACKET_EQUIPMENT_MOD_EDIT = 0x03CC,  //!< Response to the request to edit a previously applied equipment modification.
-    PACKET_PATTRIBUTE = 0x03E9,    //!< Currently unused. Notification containing punitive attribute system time information.
+    PACKET_PATTRIBUTE = 0x03E9,    //!< Notification containing punitive attribute system time information. Used by Invoke.
     PACKET_PATTRIBUTE_DEADLINE = 0x03EB, //!< Response to the request for the next punitive attribute deadline.
+    PACKET_MISSION_STATE = 0x03EC,  //!< Message containing information about the current instance's Mission state.
+    PACKET_MISSION_LEAVE = 0x03EE,  //!< Response to the request to leave a Mission instance.
+    PACKET_GAME_OVER = 0x03F0,  //!< Unknown. Response to the request to end some type of match (possibly depracated).
+    PACKET_MITAMA_REUNION = 0x03F2,   //!< Response to the request to perform a mitama reunion reinforcement.
+    PACKET_MITAMA_RESET = 0x03F4, //!< Response to the request to reset a mitama reunion growth path.
     PACKET_DEMON_DEPO_LIST = 0x03F6,  //!< Response to the request to open the demon depo.
     PACKET_DEMON_EQUIP = 0x03FC, //!< Response to the request to change demon equipment.
+    PACKET_DEMON_STATS = 0x03FD,    //!< Unused. Notifies the client of a parter demon's calculated stats (see 0x004C).
     PACKET_BARTER = 0x03FF, //!< Response containing the results of an NPC barter.
+    PACKET_PENTALPHA_DATA = 0x0401, //!< Response to the request for the current world and character Pentalpha data.
+    PACKET_PENTALPHA_END = 0x0402,  //!< Notification that the current Pentalpha match has ended.
+    PACKET_COWRIE_BETHEL = 0x0403,  //!< Message containing the client character's cowrie and bethel values.
     PACKET_SKILL_POINT_UPDATE = 0x0404,  //!< Notification that the player character's available skill points have updated.
     PACKET_WORLD_BONUS = 0x0405,  //!< Notification of the client logic adjusting world bonuses.
     PACKET_BLACKLIST = 0x0409,  //!< Response containing the current player's blacklist.
     PACKET_BLACKLIST_UPDATE = 0x040B,  //!< Response to the request to update the current player's blacklist.
+    PACKET_DESTINY_BOX = 0x040C,    //!< Notification that the player has a Destiny box available.
+    PACKET_DESTINY_BOX_DATA = 0x040E,    //!< Response to the request for Destiny box data.
+    PACKET_DESTINY_BOX_UPDATE = 0x040F, //!< Notifiation that the player's Destiny box has updated.
+    PACKET_DESTINY_LOTTO = 0x0411,  //!< Response to the request to start a Destiny box item lotto.
+    PACKET_DIGITALIZE_START = 0x0412,   //!< Notification that the player character has activated digitalization.
+    PACKET_DIGITALIZE_END = 0x0413, //!< Notification that the player character has completed digitalization.
     PACKET_DIGITALIZE_POINTS = 0x0415,  //!< Response containing the current player's digitalize point information.
+    PACKET_DIGITALIZE_POINTS_UPDATE = 0x0416,   //!< Notification that the player's digitalize points have updated.
+    PACKET_DIGITALIZE_LEVEL_UP = 0x0417,    //!< Notification that a player's digitalize level has increased.
     PACKET_DIGITALIZE_ASSIST = 0x0419,  //!< Response containing the current player's digitalize assist information.
+    PACKET_DIGITALIZE_ASSIST_LEARN = 0x041B,    //!< Response to the request to learn a digitalize assist skill.
+    PACKET_DIGITALIZE_ASSIST_REMOVE = 0x041D,   //!< Response to the request to remove an active digitalize assist skill.
     PACKET_VA_BOX = 0x041F, //!< Response to the request to list all VA items in the VA closet.
     PACKET_VA_BOX_ADD = 0x0421, //!< Response to the request to create a VA item and add it to the closet.
     PACKET_VA_BOX_REMOVE = 0x0423,  //!< Response to the request to remove a VA item from the closet.
     PACKET_VA_CHANGE = 0x0425,  //!< Reponse to the request to change the current character's VA.
     PACKET_VA_CHANGED = 0x0426, //!< Notification that a character's VA has changed.
     PACKET_VA_BOX_MOVE = 0x0428,    //!< Response to the request to move a VA item in the closet.
+    PACKET_DIGITALIZE_DUNGEON_START = 0x0429,   //!< Notification that the client has entered a digitalize instance.
+    PACKET_DIGITALIZE_DUNGEON_UPDATE = 0x042A,  //!< Message containing the current digitalize instance state.
+    PACKET_DIGITALIZE_DUNGEON_END = 0x042B, //!< Notification that the current digitalize instance has been completed.
+    PACKET_ZIOTITE_UPDATE = 0x042C, //!< Notification that the client's team's ziotite values have updated.
+    PACKET_TEAM_MEMBER_UPDATE = 0x042D, //!< Message containing team member position and HP info in tracked zones.
+    PACKET_MULTIZONE_BOSS_STATUS = 0x042E,  //!< Message containing multi-zone boss state information.
+    PACKET_MULTIZONE_BOSS_KILLED = 0x042F,  //!< Notification that a multi-zone boss has been killed.
     PACKET_ALLY_DATA = 0x0431,  //!< Message containing data about an ally NPC in the zone.
+    PACKET_REUNION_POINTS = 0x0433, //!< Response to the request to retrieve the player's reunion conversion points.
+    PACKET_REUNION_EXTRACT = 0x0435,    //!< Request to extract reunion conversion points from a demon.
+    PACKET_REUNION_INJECT = 0x0437, //!< Request to inject reunion conversion points into a demon.
+
+    //
+    // Custom Packets (Amala Network)
+    //
+    PACKET_AMALA_SERVER_VERSION = 0x1000,  //!< Server version and user level
+    PACKET_AMALA_ACCOUNT_DUMP_HEADER = 0x1001,  //!< Header info about the account dump
+    PACKET_AMALA_ACCOUNT_DUMP_PART = 0x1002,  //!< Part of the account dump data
 };
 
 /**
@@ -689,6 +849,7 @@ enum class InternalPacketCode_t : uint16_t
     PACKET_PARTY_UPDATE = 0x100A,   //!< Pass party information between the servers.
     PACKET_CLAN_UPDATE = 0x100B,    //!< Pass clan information between the servers.
     PACKET_WEB_GAME = 0x100C,   //!< Pass web game information between the servers.
+    PACKET_TEAM_UPDATE = 0x100D,    //!< Pass team information between the servers.
 };
 
 /**
@@ -711,6 +872,7 @@ enum class InternalPacketAction_t : uint8_t
 
     PACKET_ACTION_CLAN_EMBLEM_UPDATE,  //!< Indicates that a clan update consists of "emblem update" information.
     PACKET_ACTION_PARTY_DROP_RULE,  //!< Indicates that a party update consists of "drop rule" information.
+    PACKET_ACTION_TEAM_ZIOTITE, //!< Indicates that a team update consists of an updated ziotite gauge.
 };
 
 /**

@@ -130,6 +130,22 @@ std::shared_ptr<BazaarState> ClientState::GetBazaarState()
     return nullptr;
 }
 
+bool ClientState::HasActiveEvent() const
+{
+    auto eState = GetEventState();
+    auto current = eState ? eState->GetCurrent() : nullptr;
+
+    return current != nullptr;
+}
+
+int32_t ClientState::GetEventSourceEntityID() const
+{
+    auto eState = GetEventState();
+    auto current = eState ? eState->GetCurrent() : nullptr;
+
+    return current ? current->GetSourceEntityID() : 0;
+}
+
 int32_t ClientState::GetCurrentMenuShopID() const
 {
     auto eState = GetEventState();
@@ -227,19 +243,30 @@ const libobjgen::UUID ClientState::GetLocalObjectUUID(int32_t objectID)
     return NULLUUID;
 }
 
-bool ClientState::SetObjectID(const libobjgen::UUID& uuid, int64_t objectID)
+bool ClientState::SetObjectID(const libobjgen::UUID& uuid, int64_t objectID,
+    bool allowReset)
 {
     auto uuidStr = uuid.ToString();
 
+    std::lock_guard<std::mutex> lock(mLock);
+
     auto iter = mObjectIDs.find(uuidStr);
-    if(iter == mObjectIDs.end())
+    if(iter != mObjectIDs.end())
     {
-        mObjectIDs[uuidStr] = objectID;
-        mObjectUUIDs[objectID] = uuid;
-        return true;
+        if(allowReset)
+        {
+            mObjectUUIDs.erase(iter->second);
+            mObjectIDs.erase(iter);
+        }
+        else
+        {
+            return false;
+        }
     }
 
-    return false;
+    mObjectIDs[uuidStr] = objectID;
+    mObjectUUIDs[objectID] = uuid;
+    return true;
 }
 
 const libobjgen::UUID ClientState::GetAccountUID() const
@@ -272,6 +299,11 @@ uint32_t ClientState::GetPartyID() const
 int32_t ClientState::GetClanID() const
 {
     return GetAccountLogin()->GetCharacterLogin()->GetClanID();
+}
+
+int32_t ClientState::GetTeamID() const
+{
+    return GetAccountLogin()->GetCharacterLogin()->GetTeamID();
 }
 
 std::shared_ptr<objects::PartyCharacter> ClientState::GetPartyCharacter(

@@ -41,10 +41,14 @@
 #include <ActivatedAbility.h>
 #include <ChannelConfig.h>
 #include <Character.h>
+#include <CharacterLogin.h>
+#include <CharacterProgress.h>
 #include <Event.h>
+#include <EventCounter.h>
 #include <EventInstance.h>
 #include <EventState.h>
 #include <Expertise.h>
+#include <InstanceAccess.h>
 #include <Item.h>
 #include <ItemBox.h>
 #include <MiItemBasicData.h>
@@ -57,21 +61,27 @@
 #include <MiSpotData.h>
 #include <MiZoneBasicData.h>
 #include <MiZoneData.h>
+#include <Party.h>
 #include <PostItem.h>
+#include <PvPData.h>
 #include <ReportedPlayer.h>
 #include <ServerZone.h>
 #include <ServerZoneInstance.h>
+#include <Team.h>
 
 // Standard C Includes
 #include <cstdlib>
+#include <cmath>
 
 // channel Includes
 #include "AccountManager.h"
 #include "ChannelServer.h"
+#include "ChannelSyncManager.h"
 #include "CharacterManager.h"
 #include "ClientState.h"
 #include "EventManager.h"
 #include "ManagerConnection.h"
+#include "MatchManager.h"
 #include "SkillManager.h"
 #include "TokuseiManager.h"
 #include "ZoneManager.h"
@@ -84,9 +94,14 @@ ChatManager::ChatManager(const std::weak_ptr<ChannelServer>& server)
     mGMands["addcp"] = &ChatManager::GMCommand_AddCP;
     mGMands["announce"] = &ChatManager::GMCommand_Announce;
     mGMands["ban"] = &ChatManager::GMCommand_Ban;
+    mGMands["bethel"] = &ChatManager::GMCommand_Bethel;
+    mGMands["bp"] = &ChatManager::GMCommand_BattlePoints;
     mGMands["coin"] = &ChatManager::GMCommand_Coin;
     mGMands["contract"] = &ChatManager::GMCommand_Contract;
+    mGMands["counter"] = &ChatManager::GMCommand_Counter;
+    mGMands["cowrie"] = &ChatManager::GMCommand_Cowrie;
     mGMands["crash"] = &ChatManager::GMCommand_Crash;
+    mGMands["dxp"] = &ChatManager::GMCommand_DigitalizePoints;
     mGMands["effect"] = &ChatManager::GMCommand_Effect;
     mGMands["enchant"] = &ChatManager::GMCommand_Enchant;
     mGMands["enemy"] = &ChatManager::GMCommand_Enemy;
@@ -97,6 +112,7 @@ ChatManager::ChatManager(const std::weak_ptr<ChannelServer>& server)
     mGMands["flag"] = &ChatManager::GMCommand_Flag;
     mGMands["fgauge"] = &ChatManager::GMCommand_FusionGauge;
     mGMands["goto"] = &ChatManager::GMCommand_Goto;
+    mGMands["gp"] = &ChatManager::GMCommand_GradePoints;
     mGMands["help"] = &ChatManager::GMCommand_Help;
     mGMands["homepoint"] = &ChatManager::GMCommand_Homepoint;
     mGMands["instance"] = &ChatManager::GMCommand_Instance;
@@ -107,6 +123,8 @@ ChatManager::ChatManager(const std::weak_ptr<ChannelServer>& server)
     mGMands["license"] = &ChatManager::GMCommand_License;
     mGMands["lnc"] = &ChatManager::GMCommand_LNC;
     mGMands["map"] = &ChatManager::GMCommand_Map;
+    mGMands["online"] = &ChatManager::GMCommand_Online;
+    mGMands["penalty"] = &ChatManager::GMCommand_PenaltyReset;
     mGMands["plugin"] = &ChatManager::GMCommand_Plugin;
     mGMands["pos"] = &ChatManager::GMCommand_Position;
     mGMands["post"] = &ChatManager::GMCommand_Post;
@@ -122,6 +140,7 @@ ChatManager::ChatManager(const std::weak_ptr<ChannelServer>& server)
     mGMands["spawn"] = &ChatManager::GMCommand_Spawn;
     mGMands["speed"] = &ChatManager::GMCommand_Speed;
     mGMands["spirit"] = &ChatManager::GMCommand_Spirit;
+    mGMands["support"] = &ChatManager::GMCommand_Support;
     mGMands["tickermessage"] = &ChatManager::GMCommand_TickerMessage;
     mGMands["title"] = &ChatManager::GMCommand_Title;
     mGMands["tokusei"] = &ChatManager::GMCommand_Tokusei;
@@ -129,6 +148,7 @@ ChatManager::ChatManager(const std::weak_ptr<ChannelServer>& server)
     mGMands["version"] = &ChatManager::GMCommand_Version;
     mGMands["worldtime"] = &ChatManager::GMCommand_WorldTime;
     mGMands["xp"] = &ChatManager::GMCommand_XP;
+    mGMands["ziotite"] = &ChatManager::GMCommand_Ziotite;
     mGMands["zone"] = &ChatManager::GMCommand_Zone;
 }
 
@@ -148,6 +168,12 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
     }
 
     auto state = client->GetClientState();
+    auto zone = state->GetZone();
+    if(!zone)
+    {
+        return false;
+    }
+
     auto character = state->GetCharacterState()->GetEntity();
     libcomp::String sentFrom = character->GetName();
 
@@ -189,6 +215,32 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
                 return false;
             }
             break;
+        case ChatType_t::CHAT_TEAM:
+            visibility = ChatVis_t::CHAT_VIS_TEAM;
+            relayID = (uint32_t)state->GetTeamID();
+            LOG_INFO(libcomp::String("[Team]:  %1: %2\n").Arg(sentFrom)
+                .Arg(message));
+            if(zone->GetInstanceType() == InstanceType_t::DIASPORA)
+            {
+                // Send to the whole zone instead
+                visibility = ChatVis_t::CHAT_VIS_ZONE;
+            }
+            else if(state->GetTeamID())
+            {
+                relayMode = PacketRelayMode_t::RELAY_TEAM;
+            }
+            else
+            {
+                LOG_ERROR(libcomp::String("Team chat attempted by"
+                    " character not in a team: %1\n").Arg(sentFrom));
+                return false;
+            }
+            break;
+        case ChatType_t::CHAT_VERSUS:
+            visibility = ChatVis_t::CHAT_VIS_VERSUS;
+            LOG_INFO(libcomp::String("[Versus]:  %1: %2\n").Arg(sentFrom)
+                .Arg(message));
+            break;
         case ChatType_t::CHAT_SHOUT:
             visibility = ChatVis_t::CHAT_VIS_ZONE;
             LOG_INFO(libcomp::String("[Shout]:  %1: %2\n").Arg(sentFrom)
@@ -208,8 +260,10 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
             return false;
     }
 
+    bool relay = relayMode != PacketRelayMode_t::RELAY_FAILURE;
+
     libcomp::Packet p;
-    if(relayMode != PacketRelayMode_t::RELAY_FAILURE)
+    if(relay)
     {
         // Route the message through the world via packet relay
         p.WritePacketCode(InternalPacketCode_t::PACKET_RELAY);
@@ -222,7 +276,7 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
     if(chatChannel == ChatType_t::CHAT_CLAN)
     {
         p.WritePacketCode(ChannelToClientPacketCode_t::PACKET_CLAN_CHAT);
-        p.WriteS32Little(state->GetClanID());
+        p.WriteS32Little((int32_t)relayID);
         p.WriteString16Little(state->GetClientStringEncoding(),
             sentFrom, true);
         p.WriteString16Little(state->GetClientStringEncoding(),
@@ -230,7 +284,12 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
     }
     else if(chatChannel == ChatType_t::CHAT_TEAM)
     {
-        /// @todo: team chat
+        p.WritePacketCode(ChannelToClientPacketCode_t::PACKET_TEAM_CHAT);
+        p.WriteS32Little((int32_t)relayID);
+        p.WriteString16Little(state->GetClientStringEncoding(),
+            sentFrom, true);
+        p.WriteString16Little(state->GetClientStringEncoding(),
+            message, true);
     }
     else
     {
@@ -252,6 +311,32 @@ bool ChatManager::SendChatMessage(const std::shared_ptr<
             break;
         case ChatVis_t::CHAT_VIS_RANGE:
             zoneManager->SendToRange(client, p, true);
+            break;
+        case ChatVis_t::CHAT_VIS_VERSUS:
+            // Get all characters in the instance in the same faction
+            {
+                std::list<std::shared_ptr<ChannelClientConnection>> vsTeam;
+                auto instance = zone ? zone->GetInstance() : nullptr;
+                if(instance)
+                {
+                    auto cState = state->GetCharacterState();
+                    for(auto c : instance->GetConnections())
+                    {
+                        auto cState2 = c->GetClientState()
+                            ->GetCharacterState();
+                        if(cState->SameFaction(cState2))
+                        {
+                            vsTeam.push_back(c);
+                        }
+                    }
+                }
+                else
+                {
+                    vsTeam.push_back(client);
+                }
+
+                ChannelClientConnection::BroadcastPacket(vsTeam, p);
+            }
             break;
         case ChatVis_t::CHAT_VIS_PARTY:
         case ChatVis_t::CHAT_VIS_CLAN:
@@ -296,6 +381,19 @@ bool ChatManager::SendTellMessage(const std::shared_ptr<
         ->SendPacket(relay);
 
     return true;
+}
+
+bool ChatManager::SendTeamChatMessage(const std::shared_ptr<
+    ChannelClientConnection>& client, const libcomp::String& message,
+    int32_t teamID)
+{
+    auto state = client->GetClientState();
+    if(state->GetTeamID() == teamID)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_TEAM, message);
+    }
+
+    return false;
 }
 
 bool ChatManager::HandleGMand(const std::shared_ptr<
@@ -372,7 +470,7 @@ bool ChatManager::GMCommand_AddCP(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ADD_CP))
     {
         return true;
     }
@@ -441,7 +539,7 @@ bool ChatManager::GMCommand_Announce(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 100))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ANNOUNCE))
     {
         return true;
     }
@@ -466,7 +564,7 @@ bool ChatManager::GMCommand_Ban(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_BAN))
     {
         return true;
     }
@@ -480,24 +578,134 @@ bool ChatManager::GMCommand_Ban(const std::shared_ptr<
             "@ban requires one argument, <username>"));
     }
 
+    uint8_t kickLevel = 1;
+
     std::shared_ptr<objects::Character> target;
     std::shared_ptr<objects::Account> targetAccount;
     std::shared_ptr<channel::ChannelClientConnection> targetClient;
-    GetTargetCharacterAccount(bannedPlayer, false, target, targetAccount,
-        targetClient);
+    if(!GetTargetCharacterAccount(bannedPlayer, false, target, targetAccount,
+        targetClient) || (targetAccount && !targetClient))
+    {
+        if(!GetIntegerArg(kickLevel, argsCopy) ||
+            kickLevel == 0 || kickLevel > 3)
+        {
+            kickLevel = 1;
+        }
 
-    if(targetAccount &&
-        client->GetClientState()->GetUserLevel() < targetAccount->GetUserLevel())
+        SendChatMessage(client, ChatType_t::CHAT_SELF,
+            libcomp::String("Target character is not currently on the channel"
+                " to kick. Banning and sending level %1 disconnect request to"
+                " the world.").Arg(kickLevel));
+    }
+
+    if(!targetAccount)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "Supplied character name is invalid.");
+    }
+    else if(client->GetClientState()->GetUserLevel() <
+        targetAccount->GetUserLevel())
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
             "Your user level is lower than the user you tried to ban.");
     }
 
-    if(targetClient != nullptr)
+    auto server = mServer.lock();
+    targetAccount->SetEnabled(false);
+    targetAccount->Update(server->GetLobbyDatabase());
+
+    if(targetClient)
     {
-        targetAccount->SetEnabled(false);
-        targetAccount->Update(mServer.lock()->GetLobbyDatabase());
         targetClient->Close();
+    }
+    else
+    {
+        libcomp::Packet p;
+        p.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGOUT);
+        p.WriteU32Little(
+            (uint32_t)LogoutPacketAction_t::LOGOUT_DISCONNECT);
+        p.WriteString16Little(libcomp::Convert::Encoding_t::ENCODING_UTF8,
+            targetAccount->GetUsername());
+        p.WriteU8(kickLevel);
+
+        server->GetManagerConnection()->GetWorldConnection()
+            ->SendPacket(p);
+    }
+
+    return true;
+}
+
+bool ChatManager::GMCommand_BattlePoints(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_BATTLE_POINTS))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    int32_t points;
+
+    if(!GetIntegerArg(points, argsCopy) || points < 0)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
+            "@bp requires a positive amount be specified"));
+    }
+
+    auto server = mServer.lock();
+
+    auto pvpData = server->GetMatchManager()->GetPvPData(client);
+    if(!pvpData)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "BP could not be updated");
+    }
+
+    // Hack to bump both to the same value
+    pvpData->SetBP(0);
+    pvpData->SetBPTotal(0);
+
+    server->GetCharacterManager()->UpdateBP(client, (int32_t)points, true);
+
+    return true;
+}
+
+bool ChatManager::GMCommand_Bethel(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_BETHEL))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    uint8_t idx;
+    int32_t points;
+
+    if(!GetIntegerArg(idx, argsCopy) || !GetIntegerArg(points, argsCopy) ||
+        idx >= 5 || points < 0)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
+            "@bethel requires a valid type index and a positive amount to be"
+            " specified"));
+    }
+
+    auto state = client->GetClientState();
+    auto character = state->GetCharacterState()->GetEntity();
+    auto progress = character ? character->GetProgress().Get() : nullptr;
+    if(progress)
+    {
+        auto server = mServer.lock();
+
+        progress->SetBethel(idx, points);
+
+        server->GetCharacterManager()->SendCowrieBethel(client);
+
+        server->GetWorldDatabase()->QueueUpdate(progress);
 
         return true;
     }
@@ -509,7 +717,7 @@ bool ChatManager::GMCommand_Coin(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_COIN))
     {
         return true;
     }
@@ -545,7 +753,7 @@ bool ChatManager::GMCommand_Contract(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_CONTRACT))
     {
         return true;
     }
@@ -588,11 +796,125 @@ bool ChatManager::GMCommand_Contract(const std::shared_ptr<
             "Demon could not be contracted");
 }
 
+bool ChatManager::GMCommand_Counter(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_COUNTER))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    int32_t type = 0;
+    if(!GetIntegerArg(type, argsCopy))
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "@counter requires a type ID");
+    }
+
+    if(argsCopy.size() > 0)
+    {
+        // View/edit character flag
+        auto targetClient = client;
+        auto targetAccount = client->GetClientState()->GetAccountLogin()
+            ->GetAccount().Get();
+
+        libcomp::String name;
+        if(GetStringArg(name, argsCopy))
+        {
+            std::shared_ptr<objects::Character> targetCharacter;
+            if(!GetTargetCharacterAccount(name, false, targetCharacter,
+                targetAccount, targetClient))
+            {
+                return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                    libcomp::String("Invalid character name supplied for"
+                        " counter command: %1").Arg(name));
+            }
+        }
+
+        if(argsCopy.size() > 0)
+        {
+            // Edit
+            int32_t add = 0;
+            if(!GetIntegerArg(add, argsCopy))
+            {
+                return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                    "@counter requires a value to add");
+            }
+
+            mServer.lock()->GetCharacterManager()->UpdateEventCounter(
+                targetClient, type, add);
+        }
+        else
+        {
+            // View only
+            auto state = targetClient->GetClientState();
+            auto eCounter = state->GetEventCounters(type).Get();
+
+            return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                libcomp::String("Player: %1; Event type: %2; Counter: %3")
+                .Arg(name).Arg(type)
+                .Arg(eCounter ? eCounter->GetCounter() : 0));
+        }
+    }
+    else
+    {
+        // View world flag
+        auto eCounter = mServer.lock()->GetChannelSyncManager()
+            ->GetWorldEventCounter(type);
+
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            libcomp::String("Event type: %1; Counter: %2")
+            .Arg(type).Arg(eCounter ? eCounter->GetCounter() : 0));
+    }
+
+    return true;
+}
+
+bool ChatManager::GMCommand_Cowrie(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_COWRIE))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    int32_t points;
+    if(!GetIntegerArg(points, argsCopy) || points < 0)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
+            "@cowrie requires that a positive amount be specified"));
+    }
+
+    auto state = client->GetClientState();
+    auto character = state->GetCharacterState()->GetEntity();
+    auto progress = character ? character->GetProgress().Get() : nullptr;
+    if(progress)
+    {
+        auto server = mServer.lock();
+
+        progress->SetCowrie(points);
+
+        server->GetCharacterManager()->SendCowrieBethel(client);
+
+        server->GetWorldDatabase()->QueueUpdate(progress);
+
+        return true;
+    }
+
+    return false;
+}
+
 bool ChatManager::GMCommand_Crash(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_CRASH))
     {
         return true;
     }
@@ -603,11 +925,53 @@ bool ChatManager::GMCommand_Crash(const std::shared_ptr<
     abort();
 }
 
+bool ChatManager::GMCommand_DigitalizePoints(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_DIGITALIZE_POINTS))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    uint8_t raceID;
+    int32_t points;
+    if(!GetIntegerArg(raceID, argsCopy) || !GetIntegerArg(points, argsCopy))
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "@dxp requires a demon race ID and digitalize XP");
+    }
+
+    auto server = mServer.lock();
+    auto definitionManager = server->GetDefinitionManager();
+    if(!definitionManager->GetGuardianLevelData(raceID))
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "Invalid digitalize demon race ID");
+    }
+
+    if(points < 0)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "Invalid digitalize XP supplied");
+    }
+
+    std::unordered_map<uint8_t, int32_t> pointMap;
+    pointMap[raceID] = points;
+
+    server->GetCharacterManager()->UpdateDigitalizePoints(client, pointMap,
+        false, false);
+
+    return true;
+}
+
 bool ChatManager::GMCommand_Effect(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_EFFECT))
     {
         return true;
     }
@@ -632,22 +996,21 @@ bool ChatManager::GMCommand_Effect(const std::shared_ptr<
             "Invalid effect ID supplied: %1").Arg(effectID));
     }
 
-    // If the next arg starts with a '+', mark as an add instead of replace
+    // If the next arg starts with a '+' or '-', mark as an add instead of replace
     bool isAdd = false;
 
     if(argsCopy.size() > 0)
     {
         libcomp::String& next = argsCopy.front();
-        if(!next.IsEmpty() && next.C()[0] == '+')
+        if(!next.IsEmpty() && (next.C()[0] == '+' || next.C()[0] == '-'))
         {
             isAdd = true;
-            next = next.Right(next.Length() - 1);
         }
     }
 
-    uint8_t stack;
+    int8_t stack;
 
-    if(!GetIntegerArg<uint8_t>(stack, argsCopy))
+    if(!GetIntegerArg<int8_t>(stack, argsCopy))
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
             "@effect requires a stack count");
@@ -674,7 +1037,7 @@ bool ChatManager::GMCommand_Enchant(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 650))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ENCHANT))
     {
         return true;
     }
@@ -743,8 +1106,8 @@ bool ChatManager::GMCommand_Enchant(const std::shared_ptr<
     }
 
     // No restrictions enforced here except validity checks
-    if(!definitionManager->GetEnchantData(tarot) ||
-        !definitionManager->GetEnchantData(soul))
+    if((tarot && !definitionManager->GetEnchantData(tarot)) ||
+        (soul && !definitionManager->GetEnchantData(soul)))
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
             "Invalid tarot or soul effect specified");
@@ -774,7 +1137,7 @@ bool ChatManager::GMCommand_Enemy(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ENEMY))
     {
         return true;
     }
@@ -816,7 +1179,6 @@ bool ChatManager::GMCommand_Enemy(const std::shared_ptr<
         demonID = devilData->GetBasic()->GetID();
     }
 
-    /// @todo: Default to directly in front of the player
     cState->RefreshCurrentPosition(ChannelServer::GetServerTime());
 
     float x = cState->GetCurrentX();
@@ -873,7 +1235,7 @@ bool ChatManager::GMCommand_Event(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_EVENT))
     {
         return true;
     }
@@ -946,7 +1308,7 @@ bool ChatManager::GMCommand_ExpertiseExtend(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_EXPERTISE_EXTEND))
     {
         return true;
     }
@@ -975,7 +1337,7 @@ bool ChatManager::GMCommand_ExpertiseExtend(const std::shared_ptr<
 
             character->SetExpertiseExtension(newVal);
 
-            characterManager->SendExertiseExtension(client);
+            characterManager->SendExpertiseExtension(client);
             server->GetWorldDatabase()->QueueUpdate(character,
                 state->GetAccountUID());
         }
@@ -990,7 +1352,7 @@ bool ChatManager::GMCommand_ExpertiseSet(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_EXPERTISE_SET))
     {
         return true;
     }
@@ -1035,7 +1397,7 @@ bool ChatManager::GMCommand_Familiarity(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_FAMILIARITY))
     {
         return true;
     }
@@ -1059,7 +1421,7 @@ bool ChatManager::GMCommand_Flag(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_FLAG))
     {
         return true;
     }
@@ -1182,7 +1544,7 @@ bool ChatManager::GMCommand_FusionGauge(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_FUSION_GAUGE))
     {
         return true;
     }
@@ -1206,7 +1568,7 @@ bool ChatManager::GMCommand_Goto(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_GOTO))
     {
         return true;
     }
@@ -1285,6 +1647,73 @@ bool ChatManager::GMCommand_Goto(const std::shared_ptr<
     }
 }
 
+bool ChatManager::GMCommand_GradePoints(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_GRADE_POINTS))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    auto targetClient = client;
+    auto targetAccount = client->GetClientState()->GetAccountLogin()
+        ->GetAccount().Get();
+    auto server = mServer.lock();
+
+    int32_t gp = 0;
+    if(!GetIntegerArg(gp, argsCopy) || gp < 0)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
+            "@gp requires a positive amount be specified"));
+    }
+
+    libcomp::String name;
+    if(GetStringArg(name, argsCopy))
+    {
+        std::shared_ptr<objects::Character> targetCharacter;
+        if(!GetTargetCharacterAccount(name, false, targetCharacter,
+            targetAccount, targetClient))
+        {
+            return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
+                "Invalid character name supplied for GP command: %1").Arg(name));
+        }
+    }
+
+    auto pvpData = server->GetMatchManager()->GetPvPData(targetClient);
+    if(!pvpData)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "GP could not be updated");
+    }
+
+    if(gp >= 1000)
+    {
+        gp = gp - 1000;
+        pvpData->SetRanked(true);
+    }
+    else
+    {
+        pvpData->SetRanked(false);
+    }
+
+    if(gp > 2000)
+    {
+        gp = 2000;
+    }
+
+    pvpData->SetGP(gp);
+
+    server->GetCharacterManager()->SendPvPCharacterInfo(targetClient);
+
+    server->GetWorldDatabase()->QueueUpdate(pvpData,
+        targetClient->GetClientState()->GetAccountUID());
+
+    return true;
+}
+
 bool ChatManager::GMCommand_Help(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
@@ -1300,8 +1729,21 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "Announce a ticker MESSAGE with the specified COLOR.",
         } },
         { "ban", {
-            "@ban NAME",
-            "Bans the account which owns the character NAME.",
+            "@ban NAME [1/2/3]",
+            "Bans the account which owns the character NAME. If the",
+            "account is not on the channel, remove them with options",
+            "1 (request current channel, default), 2 (request any",
+            "channel) or 3 (remove from world/lobby, USE AT OWN RISK)."
+        } },
+        { "bethel",{
+            "@bethel INDEX AMOUNT",
+            "Set the current character's bethel AMOUNT corresponding",
+            "to the supplied INDEX (0-4)."
+        } },
+        { "bp", {
+            "@bp POINTS",
+            "Set the current character's Battle Point current",
+            "amount and total accumulated points as well."
         } },
         { "coin", {
             "@coin AMOUNT",
@@ -1311,12 +1753,25 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "@contract ID|NAME",
             "Adds demon given by it's ID or NAME to your COMP.",
         } },
+        { "counter", {
+            "@counter ID [NAME] [VALUE]",
+            "View a world counter with a specific ID or view/add",
+            "to the VALUE of the counter from character with NAME."
+        } },
+        { "cowrie", {
+            "@cowrie AMOUNT",
+            "Set the current character's cowrie AMOUNT."
+        } },
         { "crash", {
             "@crash",
             "Causes the server to crash for testing the database.",
         } },
+        { "dxp", {
+            "@dxp RACEID POINTS",
+            "Gain digitalize XP for the specified demon race ID."
+        } },
         { "effect", {
-            "@effect ID [+]STACK [DEMON]",
+            "@effect ID [+/-]STACK [DEMON]",
             "Add or sets the stack count for status effect with",
             "the given ID for the player or demon if DEMON is set",
             "to 'demon'."
@@ -1374,6 +1829,12 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "character with the given name. If not set, the character",
             "with the given name is moved to the player."
         } },
+        { "gp", {
+            "@gp VALUE [NAME]",
+            "Set the Grade Points on the character NAME or to yourself",
+            "if no NAME is specified. Ranked grades are 1000 points",
+            "higher than the value displayed (ex: 1000 for ranked base)."
+        } },
         { "help", {
             "@help [GMAND]",
             "Lists the GMands supported by the server or prints the",
@@ -1396,8 +1857,12 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "'macca' or 'mag' instead."
         } },
         { "kick", {
-            "@kick NAME",
+            "@kick NAME [1/2/3]",
             "Kicks the character with the given NAME from the server.",
+            "If their account is not on the channel, remove them with",
+            "options 1 (request current channel, default), 2 (request",
+            "any channel) or 3 (remove from world/lobby, USE AT OWN",
+            "RISK)."
         } },
         { "kill", {
             "@kill [NAME]",
@@ -1421,6 +1886,16 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
         { "map", {
             "@map ID",
             "Adds map for the player with the given ID.",
+        } },
+        { "online", {
+            "@online [NAME]",
+            "Print how many players are online or check if the",
+            "character with a specific NAME is online."
+        } },
+        { "penalty", {
+            "@penalty [NAME]",
+            "Remove all PvP penalties on the character NAME or to",
+            "yourself if no NAME is specified."
         } },
         { "plugin", {
             "@plugin ID",
@@ -1505,6 +1980,11 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "EARRING (9), EXTRA (10), BACK (11), TALISMAN (12)",
             "or WEAPON (13)",
         } },
+        { "support", {
+            "@support VALUE",
+            "Show or hide the player character's support display state",
+            "based on VALUE 1 (on) or 0 (off)."
+        } },
         { "tickermessage", {
             "@tickermessage MESSAGE...",
             "Sends the ticker message MESSAGE to all players.",
@@ -1541,13 +2021,17 @@ bool ChatManager::GMCommand_Help(const std::shared_ptr<
             "Grants the player PTS XP or the demon if DEMON is",
             "set to 'demon'."
         } },
+        { "ziotite",{
+            "@ziotite SMALL LARGE",
+            "Add to the current team's SMALL and LARGE ziotite."
+        } },
         { "zone", {
             "@zone ID",
             "Moves the player to the zone specified by ID.",
         } },
     };
 
-    if(!HaveUserLevel(client, 1))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_HELP))
     {
         return true;
     }
@@ -1596,7 +2080,7 @@ bool ChatManager::GMCommand_Homepoint(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 1))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_HOMEPOINT))
     {
         return true;
     }
@@ -1641,13 +2125,14 @@ bool ChatManager::GMCommand_Instance(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_INSTANCE))
     {
         return true;
     }
 
     auto state = client->GetClientState();
     auto currentZone = state->GetZone();
+    auto team = state->GetTeam();
     if(currentZone && currentZone->GetInstance())
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
@@ -1676,7 +2161,11 @@ bool ChatManager::GMCommand_Instance(const std::shared_ptr<
             .Arg(instanceID));
     }
 
+    // Disapora has special rules for how you can enter it
+    bool diaspora = false;
+
     uint32_t variantID = 0;
+    std::shared_ptr<objects::ServerZoneInstanceVariant> variantDef;
     if(argsCopy.size() > 0)
     {
         if(!GetIntegerArg<uint32_t>(variantID, argsCopy))
@@ -1686,7 +2175,7 @@ bool ChatManager::GMCommand_Instance(const std::shared_ptr<
         }
         else
         {
-            auto variantDef = serverDataManager->GetZoneInstanceVariantData(
+            variantDef = serverDataManager->GetZoneInstanceVariantData(
                 variantID);
             if(!variantDef)
             {
@@ -1694,24 +2183,48 @@ bool ChatManager::GMCommand_Instance(const std::shared_ptr<
                     libcomp::String("Invalid variant ID supplied: %1")
                     .Arg(variantID));
             }
+
+            if(variantDef->GetInstanceType() == InstanceType_t::DIASPORA)
+            {
+                diaspora = true;
+                if(!team ||
+                    team->GetCategory() != objects::Team::Category_t::DIASPORA)
+                {
+                    return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                        "Diaspora variant cannot be entered without a team");
+                }
+            }
         }
     }
 
-    auto instance = zoneManager->CreateInstance(client, instanceID, variantID);
-    bool success = instance != nullptr;
-    if(success)
+    std::set<int32_t> accessCIDs = { state->GetWorldCID() };
+    if(diaspora)
     {
-        uint32_t firstZoneID = *instDef->ZoneIDsBegin();
-        uint32_t firstDynamicMapID = *instDef->DynamicMapIDsBegin();
-
-        auto zoneDef = server->GetServerDataManager()->GetZoneData(
-            firstZoneID, firstDynamicMapID);
-        success = zoneManager->EnterZone(client, firstZoneID,
-            firstDynamicMapID, zoneDef->GetStartingX(),
-            zoneDef->GetStartingY(), zoneDef->GetStartingRotation());
+        for(auto memberCID : team->GetMemberIDs())
+        {
+            accessCIDs.insert(memberCID);
+        }
+    }
+    else
+    {
+        auto party = state->GetParty();
+        if(party)
+        {
+            for(auto memberCID : party->GetMemberIDs())
+            {
+                accessCIDs.insert(memberCID);
+            }
+        }
     }
 
-    if(!success)
+    auto instAccess = std::make_shared<objects::InstanceAccess>();
+    instAccess->SetAccessCIDs(accessCIDs);
+    instAccess->SetDefinitionID(instanceID);
+    instAccess->SetVariantID(variantID);
+
+    uint8_t resultCode = zoneManager->CreateInstance(instAccess);
+    if(!resultCode ||
+        (!diaspora && !zoneManager->MoveToInstance(client, instAccess)))
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
             libcomp::String("Failed to add to instance: %1").Arg(instanceID));
@@ -1724,7 +2237,7 @@ bool ChatManager::GMCommand_Item(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ITEM))
     {
         return true;
     }
@@ -1781,7 +2294,7 @@ bool ChatManager::GMCommand_Kick(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_KICK))
     {
         return true;
     }
@@ -1795,14 +2308,33 @@ bool ChatManager::GMCommand_Kick(const std::shared_ptr<
             "@kick requires one argument, <username>");
     }
 
+    uint8_t kickLevel = 1;
+
     std::shared_ptr<objects::Character> target;
     std::shared_ptr<objects::Account> targetAccount;
     std::shared_ptr<channel::ChannelClientConnection> targetClient;
-    GetTargetCharacterAccount(kickedPlayer, false, target, targetAccount,
-        targetClient);
+    if(!GetTargetCharacterAccount(kickedPlayer, false, target, targetAccount,
+        targetClient) || (targetAccount && !targetClient))
+    {
+        if(!GetIntegerArg(kickLevel, argsCopy) ||
+            kickLevel == 0 || kickLevel > 3)
+        {
+            kickLevel = 1;
+        }
 
-    if(targetAccount &&
-        client->GetClientState()->GetUserLevel() < targetAccount->GetUserLevel())
+        SendChatMessage(client, ChatType_t::CHAT_SELF,
+            libcomp::String("Target character is not currently on the channel"
+                " to kick. Sending level %1 disconnect request to the world.")
+            .Arg(kickLevel));
+    }
+
+    if(!targetAccount)
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "Supplied character name is invalid.");
+    }
+    else if(client->GetClientState()->GetUserLevel() <
+        targetAccount->GetUserLevel())
     {
         return SendChatMessage(client, ChatType_t::CHAT_SELF,
             "Your user level is lower than the user you tried to kick.");
@@ -1811,18 +2343,28 @@ bool ChatManager::GMCommand_Kick(const std::shared_ptr<
     if(targetClient != nullptr)
     {
         targetClient->Close();
+    }
+    else
+    {
+        libcomp::Packet p;
+        p.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGOUT);
+        p.WriteU32Little((uint32_t)LogoutPacketAction_t::LOGOUT_DISCONNECT);
+        p.WriteString16Little(libcomp::Convert::Encoding_t::ENCODING_UTF8,
+            targetAccount->GetUsername());
+        p.WriteU8(kickLevel);
 
-        return true;
+        mServer.lock()->GetManagerConnection()->GetWorldConnection()
+            ->SendPacket(p);
     }
 
-    return false;
+    return true;
 }
 
 bool ChatManager::GMCommand_Kill(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 500))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_KILL))
     {
         return true;
     }
@@ -1831,7 +2373,8 @@ bool ChatManager::GMCommand_Kill(const std::shared_ptr<
 
     auto state = client->GetClientState();
     auto cState = state->GetCharacterState();
-    auto targetState = cState;
+    auto targetState = state;
+    auto targetCState = cState;
 
     auto server = mServer.lock();
     auto characterManager = server->GetCharacterManager();
@@ -1841,7 +2384,7 @@ bool ChatManager::GMCommand_Kill(const std::shared_ptr<
 
     if(GetStringArg(name, argsCopy))
     {
-        targetState = nullptr;
+        targetCState = nullptr;
 
         for(auto zConnection : zoneManager->GetZoneConnections(client, true))
         {
@@ -1850,19 +2393,20 @@ bool ChatManager::GMCommand_Kill(const std::shared_ptr<
 
             if(zCharState->GetEntity()->GetName() == name)
             {
-                targetState = zCharState;
+                targetState = zConnection->GetClientState();
+                targetCState = zCharState;
                 break;
             }
         }
 
-        if(!targetState)
+        if(!targetCState)
         {
             return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
                 "Invalid character name supplied for the current zone: %1").Arg(name));
         }
     }
 
-    if(targetState->SetHPMP(0, -1, false, true))
+    if(targetCState->SetHPMP(0, -1, false, true))
     {
         // Send a generic non-combat damage skill report to kill the target
         libcomp::Packet reply;
@@ -1871,7 +2415,7 @@ bool ChatManager::GMCommand_Kill(const std::shared_ptr<
         reply.WriteU32Little(10);   // Any valid skill ID
         reply.WriteS8(-1);          // No activation ID
         reply.WriteU32Little(1);    // Number of targets
-        reply.WriteS32Little(targetState->GetEntityID());
+        reply.WriteS32Little(targetCState->GetEntityID());
         reply.WriteS32Little(MAX_PLAYER_HP_MP); // Damage 1
         reply.WriteU8(0);           // Damage 1 type (generic)
         reply.WriteS32Little(0);    // Damage 2
@@ -1882,24 +2426,27 @@ bool ChatManager::GMCommand_Kill(const std::shared_ptr<
         zoneManager->BroadcastPacket(client, reply);
 
         // Cancel any pending skill
-        auto activated = targetState->GetActivatedAbility();
+        auto activated = targetCState->GetActivatedAbility();
         if(activated)
         {
-            server->GetSkillManager()->CancelSkill(targetState,
+            server->GetSkillManager()->CancelSkill(targetCState,
                 activated->GetActivationID());
         }
 
         std::set<std::shared_ptr<ActiveEntityState>> entities;
-        entities.insert(targetState);
+        entities.insert(targetCState);
         characterManager->UpdateWorldDisplayState(entities);
 
-        server->GetTokuseiManager()->Recalculate(cState,
+        zoneManager->UpdateTrackedZone(targetState->GetZone(),
+            targetState->GetTeam());
+
+        server->GetTokuseiManager()->Recalculate(targetCState,
             std::set<TokuseiConditionType> { TokuseiConditionType::CURRENT_HP });
 
         auto entityClient = server->GetManagerConnection()->GetEntityClient(
-            targetState->GetEntityID());
-        server->GetZoneManager()->TriggerZoneActions(targetState->GetZone(),
-            { targetState }, ZoneTrigger_t::ON_DEATH, entityClient);
+            targetCState->GetEntityID());
+        zoneManager->TriggerZoneActions(targetCState->GetZone(),
+            { targetCState }, ZoneTrigger_t::ON_DEATH, entityClient);
     }
 
     return true;
@@ -1909,7 +2456,7 @@ bool ChatManager::GMCommand_LevelUp(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_LEVEL_UP))
     {
         return true;
     }
@@ -1941,32 +2488,21 @@ bool ChatManager::GMCommand_LevelUp(const std::shared_ptr<
     if(isDemon)
     {
         auto dState = state->GetDemonState();
-        auto cs = dState->GetCoreStats();
-        if(cs)
-        {
-            entityID = dState->GetEntityID();
-            currentLevel = cs->GetLevel();
-        }
-        else
+
+        if(!dState->GetEntity())
         {
             return SendChatMessage(client,
                 ChatType_t::CHAT_SELF, "No demon summoned");
         }
+
+        entityID = dState->GetEntityID();
+        currentLevel = dState->GetLevel();
     }
     else
     {
         auto cState = state->GetCharacterState();
-        auto cs = cState->GetCoreStats();
-        if(cs)
-        {
-            entityID = cState->GetEntityID();
-            currentLevel = cs->GetLevel();
-        }
-        else
-        {
-            // Really shouldn't ever happen
-            return false;
-        }
+        entityID = cState->GetEntityID();
+        currentLevel = cState->GetLevel();
     }
 
     if(lvl == -1 && lvl != 99)
@@ -2027,7 +2563,7 @@ bool ChatManager::GMCommand_LNC(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 1))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_LNC))
     {
         return true;
     }
@@ -2050,7 +2586,7 @@ bool ChatManager::GMCommand_Map(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 1))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_MAP))
     {
         return true;
     }
@@ -2069,11 +2605,127 @@ bool ChatManager::GMCommand_Map(const std::shared_ptr<
     return true;
 }
 
+bool ChatManager::GMCommand_Online(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ONLINE))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    auto server = mServer.lock();
+
+    std::shared_ptr<objects::Character> targetCharacter;
+
+    libcomp::String name;
+    if(GetStringArg(name, argsCopy))
+    {
+        // Get location of specific character
+        targetCharacter = objects::Character::LoadCharacterByName(
+            server->GetWorldDatabase(), name);
+        if(!targetCharacter)
+        {
+            return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                libcomp::String("Invalid character name supplied for"
+                    " online command: %1").Arg(name));
+        }
+
+        auto login = server->GetAccountManager()->GetActiveLogin(
+            targetCharacter->GetUUID());
+
+        uint32_t zoneID = login ? login->GetZoneID() : 0;
+        if(zoneID)
+        {
+            return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                libcomp::String("%1 is currently in zone %2")
+                .Arg(name).Arg(zoneID));
+        }
+        else
+        {
+            return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                libcomp::String("%1 is not currently online")
+                .Arg(name));
+        }
+    }
+    else
+    {
+        // Get number of current players
+        int8_t channelID = (int8_t)server->GetChannelID();
+
+        int32_t total = 0;
+        int32_t channel = 0;
+        for(auto& pair : server->GetAccountManager()->GetActiveLogins())
+        {
+            total++;
+            if(pair.second->GetChannelID() == channelID)
+            {
+                channel++;
+            }
+        }
+
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            libcomp::String("Characters online: %1 (%2 on current channel)")
+            .Arg(total).Arg(channel));
+    }
+
+    return true;
+}
+
+bool ChatManager::GMCommand_PenaltyReset(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_PENALTY_RESET))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    auto state = client->GetClientState();
+
+    auto targetClient = client;
+    auto targetCharacter = state->GetCharacterState()->GetEntity();
+    auto targetAccount = state->GetAccountLogin()->GetAccount().Get();
+
+    libcomp::String name;
+    if(GetStringArg(name, argsCopy))
+    {
+        if(!GetTargetCharacterAccount(name, false, targetCharacter,
+            targetAccount, targetClient))
+        {
+            return SendChatMessage(client, ChatType_t::CHAT_SELF,
+                libcomp::String("Invalid character name supplied for"
+                    " penalty reset command: %1").Arg(name));
+        }
+    }
+
+    auto pvpData = targetCharacter
+        ? targetCharacter->GetPvPData().Get() : nullptr;
+    if(pvpData)
+    {
+        // If the character does not have PvPData already, there is nothing
+        // to do
+        auto server = mServer.lock();
+        pvpData->SetPenaltyCount(0);
+
+        server->GetCharacterManager()->SendPvPCharacterInfo(targetClient);
+
+        server->GetWorldDatabase()->QueueUpdate(pvpData,
+            targetClient->GetClientState()->GetAccountUID());
+    }
+
+    return true;
+}
+
 bool ChatManager::GMCommand_Plugin(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_PLUGIN))
     {
         return true;
     }
@@ -2100,7 +2752,7 @@ bool ChatManager::GMCommand_Position(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_POSITION))
     {
         return true;
     }
@@ -2151,7 +2803,7 @@ bool ChatManager::GMCommand_Post(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 750))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_POST))
     {
         return true;
     }
@@ -2209,7 +2861,7 @@ bool ChatManager::GMCommand_Reported(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_REPORTED))
     {
         return true;
     }
@@ -2322,7 +2974,7 @@ bool ChatManager::GMCommand_Resolve(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 400))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_RESOLVE))
     {
         return true;
     }
@@ -2381,7 +3033,7 @@ bool ChatManager::GMCommand_Reunion(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_REUNION))
     {
         return true;
     }
@@ -2456,7 +3108,7 @@ bool ChatManager::GMCommand_Quest(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_QUEST))
     {
         return true;
     }
@@ -2497,7 +3149,7 @@ bool ChatManager::GMCommand_Scrap(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 700))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SCRAP))
     {
         return true;
     }
@@ -2579,7 +3231,7 @@ bool ChatManager::GMCommand_Skill(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SKILL))
     {
         return true;
     }
@@ -2617,7 +3269,7 @@ bool ChatManager::GMCommand_SkillPoint(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SKILL_POINT))
     {
         return true;
     }
@@ -2640,7 +3292,7 @@ bool ChatManager::GMCommand_SlotAdd(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 650))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SLOT_ADD))
     {
         return true;
     }
@@ -2706,7 +3358,7 @@ bool ChatManager::GMCommand_SoulPoints(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SOUL_POINTS))
     {
         return true;
     }
@@ -2729,7 +3381,7 @@ bool ChatManager::GMCommand_Spawn(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SPAWN))
     {
         return true;
     }
@@ -2748,7 +3400,7 @@ bool ChatManager::GMCommand_Speed(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SPEED))
     {
         return true;
     }
@@ -2790,7 +3442,7 @@ bool ChatManager::GMCommand_Spirit(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 650))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SPIRIT))
     {
         return true;
     }
@@ -2926,11 +3578,41 @@ bool ChatManager::GMCommand_Spirit(const std::shared_ptr<
     return true;
 }
 
+bool ChatManager::GMCommand_Support(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_SUPPORT))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    auto server = mServer.lock();
+    auto character = client->GetClientState()->GetCharacterState()
+        ->GetEntity();
+
+    uint8_t val;
+    if(!GetIntegerArg(val, argsCopy))
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "No value supplied for @support command");
+    }
+
+    character->SetSupportDisplay(val != 0);
+
+    return SendChatMessage(client, ChatType_t::CHAT_SELF,
+        libcomp::String("Support display %1. Changes will be visible the"
+            " next time character data is sent to any player.")
+        .Arg(val != 0 ? "enabled" : "disabled"));
+}
+
 bool ChatManager::GMCommand_TickerMessage(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 100))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_TICKER_MESSAGE))
     {
         return true;
     }
@@ -2942,8 +3624,8 @@ bool ChatManager::GMCommand_TickerMessage(const std::shared_ptr<
 
     if(!GetIntegerArg(mode, argsCopy) || argsCopy.size() < 1)
     {
-        return SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
-            "Syntax invalid, try @tickermessage <mode> <message>"));
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "Syntax invalid, try @tickermessage <mode> <message>");
     }
 
     libcomp::String message = libcomp::String::Join(argsCopy, " ");
@@ -2962,7 +3644,7 @@ bool ChatManager::GMCommand_Title(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 100))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_TITLE))
     {
         return true;
     }
@@ -2985,7 +3667,7 @@ bool ChatManager::GMCommand_Tokusei(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_TOKUSEI))
     {
         return true;
     }
@@ -3053,7 +3735,7 @@ bool ChatManager::GMCommand_Valuable(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_VALUABLE))
     {
         return true;
     }
@@ -3104,7 +3786,7 @@ bool ChatManager::GMCommand_WorldTime(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 950))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_WORLD_TIME))
     {
         return true;
     }
@@ -3134,11 +3816,57 @@ bool ChatManager::GMCommand_WorldTime(const std::shared_ptr<
     return true;
 }
 
+bool ChatManager::GMCommand_Ziotite(const std::shared_ptr<
+    channel::ChannelClientConnection>& client,
+    const std::list<libcomp::String>& args)
+{
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ZIOTITE))
+    {
+        return true;
+    }
+
+    std::list<libcomp::String> argsCopy = args;
+
+    int32_t sZiotite;
+    int8_t lZiotite;
+    if(!GetIntegerArg(sZiotite, argsCopy) || !GetIntegerArg(lZiotite, argsCopy))
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "@ziotite requires both small and large ziotite values");
+    }
+
+    auto state = client->GetClientState();
+    auto team = state->GetTeam();
+    if(team)
+    {
+        // Snap to 0 if going under
+        if(sZiotite + team->GetSmallZiotite() < 0)
+        {
+            sZiotite = -team->GetSmallZiotite();
+        }
+
+        if(lZiotite + team->GetLargeZiotite() < 0)
+        {
+            lZiotite = (int8_t)(-team->GetLargeZiotite());
+        }
+
+        mServer.lock()->GetMatchManager()->UpdateZiotite(team, sZiotite,
+            lZiotite, state->GetWorldCID());
+
+        return true;
+    }
+    else
+    {
+        return SendChatMessage(client, ChatType_t::CHAT_SELF,
+            "@ziotite failed. You are not currently in a team");
+    }
+}
+
 bool ChatManager::GMCommand_Zone(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 200))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_ZONE))
     {
         return true;
     }
@@ -3236,7 +3964,7 @@ bool ChatManager::GMCommand_XP(const std::shared_ptr<
     channel::ChannelClientConnection>& client,
     const std::list<libcomp::String>& args)
 {
-    if(!HaveUserLevel(client, 250))
+    if(!HaveUserLevel(client, SVR_CONST.GM_CMD_LVL_XP))
     {
         return true;
     }
@@ -3263,10 +3991,10 @@ bool ChatManager::GMCommand_XP(const std::shared_ptr<
 }
 
 bool ChatManager::HaveUserLevel(const std::shared_ptr<
-    channel::ChannelClientConnection>& client, int32_t requiredLevel)
+    channel::ChannelClientConnection>& client, uint32_t requiredLevel)
 {
     int32_t currentLevel = client->GetClientState()->GetUserLevel();
-    if(currentLevel < requiredLevel)
+    if(currentLevel < (int32_t)requiredLevel)
     {
         SendChatMessage(client, ChatType_t::CHAT_SELF, libcomp::String(
             "Requested GMand requires a user level of at least %1."
@@ -3289,7 +4017,8 @@ bool ChatManager::GetTargetCharacterAccount(libcomp::String& targetName,
     if(targetCharacter)
     {
         targetAccount = libcomp::PersistentObject::LoadObjectByUUID<
-            objects::Account>(worldDB, targetCharacter->GetAccount());
+            objects::Account>(server->GetLobbyDatabase(),
+                targetCharacter->GetAccount());
     }
     else
     {

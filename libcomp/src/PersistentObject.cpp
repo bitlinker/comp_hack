@@ -48,18 +48,26 @@
 #include "DemonBox.h"
 #include "DemonQuest.h"
 #include "EntityStats.h"
+#include "EventCounter.h"
 #include "Expertise.h"
 #include "FriendSettings.h"
 #include "Hotbar.h"
 #include "InheritedSkill.h"
 #include "Item.h"
 #include "ItemBox.h"
+#include "PentalphaEntry.h"
+#include "PentalphaMatch.h"
 #include "PostItem.h"
+#include "Promo.h"
+#include "PromoExchange.h"
+#include "PvPData.h"
 #include "Quest.h"
 #include "RegisteredChannel.h"
 #include "RegisteredWorld.h"
 #include "ReportedPlayer.h"
 #include "StatusEffect.h"
+#include "UBResult.h"
+#include "UBTournament.h"
 
 using namespace libcomp;
 
@@ -186,8 +194,9 @@ std::shared_ptr<PersistentObject> PersistentObject::GetObjectByUUID(const libobj
     return nullptr;
 }
 
-std::shared_ptr<PersistentObject> PersistentObject::LoadObjectByUUID(size_t typeHash,
-    const std::shared_ptr<Database>& db,  const libobjgen::UUID& uuid, bool reload)
+std::shared_ptr<PersistentObject> PersistentObject::LoadObjectByUUID(
+    size_t typeHash, const std::shared_ptr<Database>& db,
+    const libobjgen::UUID& uuid, bool reload, bool reportError)
 {
     auto obj = !reload ? GetObjectByUUID(uuid) : nullptr;
 
@@ -199,7 +208,7 @@ std::shared_ptr<PersistentObject> PersistentObject::LoadObjectByUUID(size_t type
 
         delete bind;
 
-        if(nullptr == obj)
+        if(reportError && nullptr == obj)
         {
             LOG_ERROR(String("Unknown UUID '%1' for '%2' failed to load\n")
                 .Arg(uuid.ToString()).Arg(sTypeMap[typeHash]->GetName()));
@@ -342,6 +351,24 @@ bool PersistentObject::Delete(const std::shared_ptr<Database>& db)
     return false;
 }
 
+bool PersistentObject::SaveWithUUID(tinyxml2::XMLDocument& doc,
+    tinyxml2::XMLElement& root, bool append) const
+{
+    bool result = Save(doc, root, append);
+
+    if(result)
+    {
+        tinyxml2::XMLElement *pMember = doc.NewElement("member");
+        pMember->SetAttribute("name", "UUID");
+        pMember->InsertEndChild(doc.NewText(GetUUID().ToString().c_str()));
+
+        tinyxml2::XMLElement *pElement = root.LastChild()->ToElement();
+        pElement->InsertFirstChild(pMember);
+    }
+
+    return result;
+}
+
 namespace libcomp
 {
     template<>
@@ -383,6 +410,7 @@ namespace libcomp
                 .Func("Insert", &PersistentObject::Insert)
                 .Func("Update", &PersistentObject::Update)
                 .Func("Delete", &PersistentObject::Delete)
+                .StaticFunc("Register", &PersistentObject::Register)
                 .StaticFunc<std::list<std::shared_ptr<PersistentObject>> (*)(size_t, const std::shared_ptr<Database>&)>("LoadObjects", &PersistentObject::LoadObjects)
                 .StaticFunc<size_t (*)(const std::string&)>("GetTypeHashByName", &PersistentObject::GetTypeHashByName)
                 ; // Last call to binding
@@ -434,6 +462,9 @@ bool PersistentObject::Initialize()
     RegisterType(typeid(objects::EntityStats), objects::EntityStats::GetMetadata(),
         []() {  return (PersistentObject*)new objects::EntityStats(); });
 
+    RegisterType(typeid(objects::EventCounter), objects::EventCounter::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::EventCounter(); });
+
     RegisterType(typeid(objects::Expertise), objects::Expertise::GetMetadata(),
         []() {  return (PersistentObject*)new objects::Expertise(); });
 
@@ -452,8 +483,23 @@ bool PersistentObject::Initialize()
     RegisterType(typeid(objects::ItemBox), objects::ItemBox::GetMetadata(),
         []() {  return (PersistentObject*)new objects::ItemBox(); });
 
+    RegisterType(typeid(objects::PentalphaEntry), objects::PentalphaEntry::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::PentalphaEntry(); });
+
+    RegisterType(typeid(objects::PentalphaMatch), objects::PentalphaMatch::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::PentalphaMatch(); });
+
     RegisterType(typeid(objects::PostItem), objects::PostItem::GetMetadata(),
         []() {  return (PersistentObject*)new objects::PostItem(); });
+
+    RegisterType(typeid(objects::Promo), objects::Promo::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::Promo(); });
+
+    RegisterType(typeid(objects::PromoExchange), objects::PromoExchange::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::PromoExchange(); });
+
+    RegisterType(typeid(objects::PvPData), objects::PvPData::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::PvPData(); });
 
     RegisterType(typeid(objects::Quest), objects::Quest::GetMetadata(),
         []() {  return (PersistentObject*)new objects::Quest(); });
@@ -469,6 +515,12 @@ bool PersistentObject::Initialize()
 
     RegisterType(typeid(objects::StatusEffect), objects::StatusEffect::GetMetadata(),
         []() {  return (PersistentObject*)new objects::StatusEffect(); });
+
+    RegisterType(typeid(objects::UBResult), objects::UBResult::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::UBResult(); });
+
+    RegisterType(typeid(objects::UBTournament), objects::UBTournament::GetMetadata(),
+        []() {  return (PersistentObject*)new objects::UBTournament(); });
 
     return !sInitializationFailed;
 }

@@ -32,11 +32,13 @@
 #include <ManagerSystem.h>
 #include <MessageTick.h>
 #include <PacketCodes.h>
+#include <ScriptEngine.h>
 #include <ServerDataManager.h>
 
 // object Includes
 #include <Account.h>
 #include <ChannelConfig.h>
+#include <WorldSharedConfig.h>
 
 // channel Includes
 #include "AccountManager.h"
@@ -51,20 +53,56 @@
 #include "ManagerClientPacket.h"
 #include "ManagerConnection.h"
 #include "Packets.h"
+#include "PerformanceTimer.h"
+#include "MatchManager.h"
 #include "SkillManager.h"
 #include "TokuseiManager.h"
 #include "ZoneManager.h"
 
 using namespace channel;
 
+namespace libcomp
+{
+    template<>
+    ScriptEngine& ScriptEngine::Using<ChannelServer>()
+    {
+        if(!BindingExists("ChannelServer", true))
+        {
+            Import("database");
+
+            Using<ChannelSyncManager>();
+            Using<MatchManager>();
+            Using<WorldClock>();
+            Using<ZoneManager>();
+
+            Sqrat::Class<ChannelServer,
+                Sqrat::NoConstructor<ChannelServer>> binding(mVM, "ChannelServer");
+            binding
+                .Func("GetWorldClockTime", &ChannelServer::GetWorldClockTime)
+                .Func("GetWorldDatabase", &ChannelServer::GetWorldDatabase)
+                .Func("GetLobbyDatabase", &ChannelServer::GetLobbyDatabase)
+                .Func("GetChannelSyncManager", &ChannelServer::GetChannelSyncManager)
+                .Func("GetMatchManager", &ChannelServer::GetMatchManager)
+                .Func("GetZoneManager", &ChannelServer::GetZoneManager)
+                .StaticFunc("GetServerTime", &ChannelServer::GetServerTime)
+                .StaticFunc("GetExpirationInSeconds", &ChannelServer::GetExpirationInSeconds);
+
+            Bind<ChannelServer>("ChannelServer", binding);
+        }
+
+        return *this;
+    }
+}
+
 ChannelServer::ChannelServer(const char *szProgram,
     std::shared_ptr<objects::ServerConfig> config,
     std::shared_ptr<libcomp::ServerCommandLineParser> commandLine) :
     libcomp::BaseServer(szProgram, config, commandLine), mAccountManager(0),
     mActionManager(0), mAIManager(0), mCharacterManager(0), mChatManager(0),
-    mEventManager(0), mSkillManager(0), mZoneManager(0), mDefinitionManager(0),
-    mServerDataManager(0), mRecalcTimeDependents(false), mMaxEntityID(0),
-    mMaxObjectID(0), mTickRunning(true)
+    mEventManager(0), mFusionManager(0), mMatchManager(0), mSkillManager(0),
+    mZoneManager(0), mDefinitionManager(0), mServerDataManager(0),
+    mRecalcTimeDependents(false), mMaxEntityID(0), mMaxObjectID(0),
+    mTicksPending(0), mTickRunning(true)
 {
 }
 
@@ -127,6 +165,8 @@ bool ChannelServer::Initialize()
         to_underlying(InternalPacketCode_t::PACKET_CLAN_UPDATE));
     internalPacketManager->AddParser<Parsers::WebGame>(
         to_underlying(InternalPacketCode_t::PACKET_WEB_GAME));
+    internalPacketManager->AddParser<Parsers::TeamUpdate>(
+        to_underlying(InternalPacketCode_t::PACKET_TEAM_UPDATE));
 
     //Add the managers to the main worker.
     mMainWorker.AddManager(internalPacketManager);
@@ -380,6 +420,12 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_BAZAAR_MARKET_END));
     clientPacketManager->AddParser<Parsers::BazaarMarketComment>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_BAZAAR_MARKET_COMMENT));
+    clientPacketManager->AddParser<Parsers::PartyRecruitReply>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PARTY_RECRUIT_REPLY));
+    clientPacketManager->AddParser<Parsers::PartyRecruit>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PARTY_RECRUIT));
+    clientPacketManager->AddParser<Parsers::StatusIcon>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_STATUS_ICON));
     clientPacketManager->AddParser<Parsers::MapFlag>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_MAP_FLAG));
     clientPacketManager->AddParser<Parsers::Analyze>(
@@ -414,6 +460,8 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_DUNGEON_RECORDS));
     clientPacketManager->AddParser<Parsers::Analyze>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_ANALYZE_DUNGEON_RECORDS));
+    clientPacketManager->AddParser<Parsers::ItemPromo>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_ITEM_PROMO));
     clientPacketManager->AddParser<Parsers::TriFusionJoin>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_TRIFUSION_JOIN));
     clientPacketManager->AddParser<Parsers::TriFusionDemonUpdate>(
@@ -490,6 +538,16 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_REUNION));
     clientPacketManager->AddParser<Parsers::DemonQuestReject>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_QUEST_REJECT));
+    clientPacketManager->AddParser<Parsers::PvPConfirm>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_CONFIRM));
+    clientPacketManager->AddParser<Parsers::PvPBaseCapture>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_BASE_CAPTURE));
+    clientPacketManager->AddParser<Parsers::PvPBaseLeave>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_BASE_LEAVE));
+    clientPacketManager->AddParser<Parsers::PvPJoin>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_JOIN));
+    clientPacketManager->AddParser<Parsers::PvPCancel>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_CANCEL));
     clientPacketManager->AddParser<Parsers::PvPCharacterInfo>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_PVP_CHARACTER_INFO));
     clientPacketManager->AddParser<Parsers::AutoRecoveryUpdate>(
@@ -502,14 +560,34 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_BIKE_BOOST_OFF));
     clientPacketManager->AddParser<Parsers::BikeDismount>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_BIKE_DISMOUNT));
+    clientPacketManager->AddParser<Parsers::TeamForm>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_FORM));
+    clientPacketManager->AddParser<Parsers::TeamInvite>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_INVITE));
+    clientPacketManager->AddParser<Parsers::TeamAnswer>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_ANSWER));
+    clientPacketManager->AddParser<Parsers::TeamKick>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_KICK));
+    clientPacketManager->AddParser<Parsers::TeamLeaderUpdate>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_LEADER_UPDATE));
+    clientPacketManager->AddParser<Parsers::TeamLeave>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_LEAVE));
+    clientPacketManager->AddParser<Parsers::TeamChat>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_CHAT));
     clientPacketManager->AddParser<Parsers::TeamInfo>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_INFO));
+    clientPacketManager->AddParser<Parsers::TeamMemberList>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_TEAM_MEMBER_LIST));
     clientPacketManager->AddParser<Parsers::EquipmentSpiritFuse>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_EQUIPMENT_SPIRIT_FUSE));
     clientPacketManager->AddParser<Parsers::DemonQuestPending>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_QUEST_PENDING));
     clientPacketManager->AddParser<Parsers::ItemDepoRemote>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_ITEM_DEPO_REMOTE));
+    clientPacketManager->AddParser<Parsers::DiasporaBaseCapture>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DIASPORA_BASE_CAPTURE));
+    clientPacketManager->AddParser<Parsers::DiasporaEnter>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DIASPORA_ENTER));
     clientPacketManager->AddParser<Parsers::DemonDepoRemote>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_DEPO_REMOTE));
     clientPacketManager->AddParser<Parsers::CommonSwitchUpdate>(
@@ -526,6 +604,18 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_TRIFUSION_SOLO));
     clientPacketManager->AddParser<Parsers::EquipmentSpiritDefuse>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_EQUIPMENT_SPIRIT_DEFUSE));
+    clientPacketManager->AddParser<Parsers::DemonForceEnd>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_FORCE_END));
+    clientPacketManager->AddParser<Parsers::UBSpectatePlayer>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_UB_SPECTATE_PLAYER));
+    clientPacketManager->AddParser<Parsers::UBProceed>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_UB_PROCEED));
+    clientPacketManager->AddParser<Parsers::UBLeave>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_UB_LEAVE));
+    clientPacketManager->AddParser<Parsers::UBLottoCancel>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_UB_LOTTO_CANCEL));
+    clientPacketManager->AddParser<Parsers::UBLottoJoin>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_UB_LOTTO_JOIN));
     clientPacketManager->AddParser<Parsers::SearchEntryInfo>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_SEARCH_ENTRY_INFO));
     clientPacketManager->AddParser<Parsers::ITimeData>(
@@ -546,14 +636,20 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_EQUIPMENT_MOD_EDIT));
     clientPacketManager->AddParser<Parsers::PAttributeDeadline>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_PATTRIBUTE_DEADLINE));
+    clientPacketManager->AddParser<Parsers::MissionLeave>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_MISSION_LEAVE));
+    clientPacketManager->AddParser<Parsers::MitamaReunion>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_MITAMA_REUNION));
+    clientPacketManager->AddParser<Parsers::MitamaReset>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_MITAMA_RESET));
     clientPacketManager->AddParser<Parsers::DemonDepoList>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_DEPO_LIST));
-    clientPacketManager->AddParser<Parsers::DemonForceEnd>(
-        to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_FORCE_END));
     clientPacketManager->AddParser<Parsers::DemonEquip>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DEMON_EQUIP));
     clientPacketManager->AddParser<Parsers::Barter>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_BARTER));
+    clientPacketManager->AddParser<Parsers::PentalphaData>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PENTALPHA_DATA));
     clientPacketManager->AddParser<Parsers::QuestTitle>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_QUEST_TITLE));
     clientPacketManager->AddParser<Parsers::ReportPlayer>(
@@ -562,10 +658,18 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_BLACKLIST));
     clientPacketManager->AddParser<Parsers::BlacklistUpdate>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_BLACKLIST_UPDATE));
+    clientPacketManager->AddParser<Parsers::DestinyBoxData>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DESTINY_BOX_DATA));
+    clientPacketManager->AddParser<Parsers::DestinyLotto>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DESTINY_LOTTO));
     clientPacketManager->AddParser<Parsers::DigitalizePoints>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DIGITALIZE_POINTS));
     clientPacketManager->AddParser<Parsers::DigitalizeAssist>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_DIGITALIZE_ASSIST));
+    clientPacketManager->AddParser<Parsers::DigitalizeAssistLearn>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DIGITALIZE_ASSIST_LEARN));
+    clientPacketManager->AddParser<Parsers::DigitalizeAssistRemove>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_DIGITALIZE_ASSIST_REMOVE));
     clientPacketManager->AddParser<Parsers::VABox>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_VA_BOX));
     clientPacketManager->AddParser<Parsers::VABoxAdd>(
@@ -576,13 +680,21 @@ bool ChannelServer::Initialize()
         to_underlying(ClientToChannelPacketCode_t::PACKET_VA_CHANGE));
     clientPacketManager->AddParser<Parsers::VABoxMove>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_VA_BOX_MOVE));
+    clientPacketManager->AddParser<Parsers::ReunionPoints>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_REUNION_POINTS));
+    clientPacketManager->AddParser<Parsers::ReunionExtract>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_REUNION_EXTRACT));
+    clientPacketManager->AddParser<Parsers::ReunionInject>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_REUNION_INJECT));
+
+    // Map Amala Network packet parsers to supported packets
+    clientPacketManager->AddParser<Parsers::AmalaAccountDumpRequest>(
+        to_underlying(ClientToChannelPacketCode_t::PACKET_AMALA_REQ_ACCOUNT_DUMP));
 
     // Map the Unsupported packet parser to unsupported packets or packets that
     // the server does not need to react to
     clientPacketManager->AddParser<Parsers::Unsupported>(
-        to_underlying(ClientToChannelPacketCode_t::PACKET_PARTY_MEMBER_UPDATE));
-    clientPacketManager->AddParser<Parsers::Unsupported>(
-        to_underlying(ClientToChannelPacketCode_t::PACKET_UNSUPPORTED_0232));
+        to_underlying(ClientToChannelPacketCode_t::PACKET_PLAYER_SETTINGS));
     clientPacketManager->AddParser<Parsers::Unsupported>(
         to_underlying(ClientToChannelPacketCode_t::PACKET_RECEIVED_PLAYER_DATA));
     clientPacketManager->AddParser<Parsers::Unsupported>(
@@ -603,6 +715,7 @@ bool ChannelServer::Initialize()
     mChatManager = new ChatManager(channelPtr);
     mEventManager = new EventManager(channelPtr);
     mFusionManager = new FusionManager(channelPtr);
+    mMatchManager = new MatchManager(channelPtr);
     mSkillManager = new SkillManager(channelPtr);
     mSyncManager = new ChannelSyncManager(channelPtr);
 
@@ -613,26 +726,6 @@ bool ChannelServer::Initialize()
     }
 
     mZoneManager = new ZoneManager(channelPtr);
-    mZoneManager->LoadGeometry();
-
-    // Pull first clock time then recalc
-    auto clock = GetWorldClockTime();
-    mTokuseiManager->RecalcTimedTokusei(clock);
-
-    // Schedule the world clock to tick once every second
-    auto sch = std::chrono::milliseconds(1000);
-    mTimerManager.SchedulePeriodicEvent(sch, []
-        (ChannelServer* pServer)
-        {
-            pServer->HandleClockEvents();
-        }, this);
-
-    // Schedule the demon quest reset for next midnight
-    mTimerManager.ScheduleEventIn((int)GetTimeUntilMidnight(), []
-        (ChannelServer* pServer)
-        {
-            pServer->HandleDemonQuestReset();
-        }, this);
 
     // Now connect to the world server.
     auto worldConnection = std::make_shared<
@@ -689,6 +782,7 @@ ChannelServer::~ChannelServer()
     delete mChatManager;
     delete mEventManager;
     delete mFusionManager;
+    delete mMatchManager;
     delete mSkillManager;
     delete mSyncManager;
 	delete mTokuseiManager;
@@ -704,6 +798,11 @@ ServerTime ChannelServer::GetServerTime()
 
 int32_t ChannelServer::GetExpirationInSeconds(uint32_t fixedTime, uint32_t relativeTo)
 {
+    if(fixedTime == 0)
+    {
+        return 0;
+    }
+
     if(relativeTo == 0)
     {
         relativeTo = (uint32_t)time(0);
@@ -735,10 +834,19 @@ const WorldClock ChannelServer::GetWorldClockTime()
     bool eventPassed = mWorldClock.SystemTime < mNextEventTime &&
         mNextEventTime <= (uint32_t)systemTime;
 
+    // Set the GMT system time
+    WorldClock newClock;
+    newClock.SystemTime = (uint32_t)systemTime;
+
+    // Adjust the time offset to get relative real time values
+    int32_t offset = GetServerTimeOffset();
+    if(offset)
+    {
+        systemTime = (systemTime + offset);
+    }
+
     tm* t = gmtime(&systemTime);
 
-    // Set the real time values
-    WorldClock newClock;
     newClock.WeekDay = (int8_t)(t->tm_wday + 1);
     newClock.Month = (int8_t)(t->tm_mon + 1);
     newClock.Day = (int8_t)t->tm_mday;
@@ -746,10 +854,8 @@ const WorldClock ChannelServer::GetWorldClockTime()
     newClock.SystemMin = (int8_t)t->tm_min;
     newClock.SystemSec = (int8_t)t->tm_sec;
 
-    newClock.SystemTime = (uint32_t)systemTime;
-    newClock.GameOffset = mWorldClock.GameOffset;
-
     // Now calculate the game relative times
+    newClock.GameOffset = mWorldClock.GameOffset;
 
     // Every 4 days, 15 full moon cycles will elapse and the same game time
     // will occur on the same time offset.
@@ -791,6 +897,12 @@ void ChannelServer::SetTimeOffset(uint32_t offset)
 const std::shared_ptr<objects::RegisteredChannel> ChannelServer::GetRegisteredChannel()
 {
     return mRegisteredChannel;
+}
+
+uint8_t ChannelServer::GetChannelID()
+{
+    // If it doesn't exist, assume we're the primary channel
+    return mRegisteredChannel ? mRegisteredChannel->GetID() : 0;
 }
 
 const std::list<std::shared_ptr<objects::RegisteredChannel>>
@@ -933,6 +1045,11 @@ FusionManager* ChannelServer::GetFusionManager() const
     return mFusionManager;
 }
 
+MatchManager* ChannelServer::GetMatchManager() const
+{
+    return mMatchManager;
+}
+
 SkillManager* ChannelServer::GetSkillManager() const
 {
     return mSkillManager;
@@ -984,16 +1101,34 @@ int64_t ChannelServer::GetNextObjectID()
 
 void ChannelServer::Tick()
 {
+    {
+        std::lock_guard<std::mutex> lock(mTickLock);
+        mTicksPending--;
+    }
+
     ServerTime tickTime = GetServerTime();
 
+    // Performance timer for a tick.
+    PerformanceTimer tickPerf(this);
+    tickPerf.Start();
+
+    // Performance timer for a tick task.
+    PerformanceTimer perf(this);
+
     // Update the active zone states
+    perf.Start();
     mZoneManager->UpdateActiveZoneStates();
+    perf.Stop("UpdateActiveZoneStates");
 
     // Process queued world database changes
+    perf.Start();
     auto worldFailures = mWorldDatabase->ProcessTransactionQueue();
+    perf.Stop("WorldDatabaseTransactions");
 
     // Process queued lobby database changes
+    perf.Start();
     auto lobbyFailures = mLobbyDatabase->ProcessTransactionQueue();
+    perf.Stop("LobbyDatabaseTransactions");
 
     if(worldFailures.size() > 0 || lobbyFailures.size() > 0)
     {
@@ -1021,6 +1156,7 @@ void ChannelServer::Tick()
         }
     }
 
+    perf.Start();
     std::map<ServerTime, std::list<libcomp::Message::Execute*>> schedule;
     {
         std::lock_guard<std::mutex> lock(mLock);
@@ -1057,6 +1193,9 @@ void ChannelServer::Tick()
             }
         }
     }
+    perf.Stop("ScheduleWork");
+
+    tickPerf.Stop("Tick");
 }
 
 void ChannelServer::StartGameTick()
@@ -1072,10 +1211,43 @@ void ChannelServer::StartGameTick()
         const static int TICK_DELTA = 100;
         auto tickDelta = std::chrono::milliseconds(TICK_DELTA);
 
+        int32_t ticksMissed = 0;
+        int32_t tickCounter = 0;
         while(*pTickRunning)
         {
             std::this_thread::sleep_for(tickDelta);
-            queue->Enqueue(new libcomp::Message::Tick);
+            {
+                {
+                    std::lock_guard<std::mutex> lock(mTickLock);
+                    if(mTicksPending < 2)
+                    {
+                        // Do not add more ticks to the queue if there are
+                        // at least two already pending in case we get into
+                        // a state where ticks take longer to process than
+                        // they do to queue. Having at most two at any
+                        // given point guarantees the queueing mechanism is
+                        // not to blame for missed ticks.
+                        queue->Enqueue(new libcomp::Message::Tick);
+                        mTicksPending++;
+                    }
+                    else
+                    {
+                        ticksMissed++;
+                    }
+                }
+
+                if(++tickCounter == 3000)
+                {
+                    if(ticksMissed)
+                    {
+                        LOG_DEBUG(libcomp::String("Missed %1 tick(s) within"
+                            " the last 5 minutes.\n").Arg(ticksMissed));
+                    }
+
+                    ticksMissed = 0;
+                    tickCounter = 0;
+                }
+            }
         }
     }, mQueueWorker.GetMessageQueue(), &mTickRunning);
 }
@@ -1102,32 +1274,37 @@ bool ChannelServer::SendSystemMessage(const std::shared_ptr<
     return true;
 }
 
+int32_t ChannelServer::GetServerTimeOffset()
+{
+    const static int32_t offset = GetWorldSharedConfig()->GetTimeOffset() * 60;
+    return offset;
+}
+
 int32_t ChannelServer::GetPAttributeDeadline()
 {
-    time_t systemTime = std::time(0);
-    tm* t = gmtime(&systemTime);
+    auto clock = GetWorldClockTime();
 
-    int systemDay = t->tm_wday;
-    int systemHour = t->tm_hour;
-    int systemMinutes = t->tm_min;
-    int systemSeconds = t->tm_sec;
+    int systemDay = clock.WeekDay - 1;
+    int systemHour = clock.SystemHour;
+    int systemMinutes = clock.SystemMin;
+    int systemSeconds = clock.SystemSec;
 
     // Get the system time for midnight of the next Monday
-    int32_t deadlineDelta = ((7 - systemDay) * 86400) + ((23 - systemHour) * 3600) +
+    int32_t deadlineDelta = ((7 - systemDay) * 86400) +
+        ((23 - systemHour) * 3600) +
         ((59 - systemMinutes) * 60) + systemSeconds;
-    int32_t deadline = (int32_t)systemTime + deadlineDelta;
+    int32_t deadline = (int32_t)clock.SystemTime + deadlineDelta;
 
     return deadline;
 }
 
 uint32_t ChannelServer::GetTimeUntilMidnight()
 {
-    time_t systemTime = std::time(0);
-    tm* t = gmtime(&systemTime);
+    auto clock = GetWorldClockTime();
 
-    int systemHour = t->tm_hour;
-    int systemMinutes = t->tm_min;
-    int systemSeconds = t->tm_sec;
+    int systemHour = clock.SystemHour;
+    int systemMinutes = clock.SystemMin;
+    int systemSeconds = clock.SystemSec;
 
     return (uint32_t)(((23 - systemHour) * 3600) +
         ((59 - systemMinutes) * 60) + systemSeconds);
@@ -1137,6 +1314,36 @@ ChannelServer::PersistentObjectMap
     ChannelServer::GetDefaultCharacterObjectMap() const
 {
     return mDefaultCharacterObjectMap;
+}
+
+void ChannelServer::ScheduleRecurringActions()
+{
+    auto clock = GetWorldClockTime();
+    mTokuseiManager->RecalcTimedTokusei(clock);
+
+    // Schedule the world clock to tick once every second
+    auto sch = std::chrono::milliseconds(1000);
+    mTimerManager.SchedulePeriodicEvent(sch, []
+        (ChannelServer* pServer)
+        {
+            pServer->HandleClockEvents();
+        }, this);
+
+    // Schedule the demon quest reset for next midnight
+    mTimerManager.ScheduleEventIn((int)GetTimeUntilMidnight(), []
+        (ChannelServer* pServer)
+        {
+            pServer->HandleDemonQuestReset();
+        }, this);
+
+    // Start the tick handler
+    StartGameTick();
+
+    auto conf = std::dynamic_pointer_cast<objects::ChannelConfig>(GetConfig());
+    if(conf->GetTimeout() > 0)
+    {
+        mManagerConnection->ScheduleClientTimeoutHandler(conf->GetTimeout());
+    }
 }
 
 bool ChannelServer::RegisterClockEvent(WorldClockTime time, uint8_t type,
@@ -1230,8 +1437,9 @@ void ChannelServer::HandleDemonQuestReset()
         }
     }
 
-    // Reset timer to run again
-    mTimerManager.ScheduleEventIn((int)GetTimeUntilMidnight(), []
+    // Reset timer to run again (24 hours from now if still midnight)
+    uint32_t next = GetTimeUntilMidnight();
+    mTimerManager.ScheduleEventIn((int)(next ? next : 86400), []
         (ChannelServer* pServer)
         {
             pServer->HandleDemonQuestReset();

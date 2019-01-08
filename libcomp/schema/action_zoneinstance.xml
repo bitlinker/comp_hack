@@ -7,9 +7,12 @@
         <member type="enum" name="mode" underlying="uint8_t">
             <value>CREATE</value>
             <value>JOIN</value>
-            <value>REMOVE</value>
             <value>START_TIMER</value>
             <value>STOP_TIMER</value>
+            <value>TEAM_PVP</value>
+            <value>SOLO_CREATE</value>
+            <value>TEAM_JOIN</value>
+            <value>CLAN_JOIN</value>
         </member>
         <member type="u32" name="variantID"/>
         <member type="u32" name="timerID"/>

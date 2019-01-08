@@ -127,23 +127,47 @@ namespace libcomp
 /// ID of the "Attack" expertise.
 #define EXPERTISE_ATTACK (0)
 
+/// ID of the "Talk" expertise.
+#define EXPERTISE_TALK (12)
+
+/// ID of the "Intimidate" expertise.
+#define EXPERTISE_INTIMIDATE (13)
+
+/// ID of the "Taunt" expertise.
+#define EXPERTISE_TAUNT (14)
+
+/// ID of the "Summon" expertise.
+#define EXPERTISE_SUMMON (15)
+
 /// ID of the "Fusion" expertise.
 #define EXPERTISE_FUSION (17)
 
 /// ID of the "Demonology" expertise.
 #define EXPERTISE_DEMONOLOGY (18)
 
-/// ID of the "Weapon knowledge" expertise.
+/// ID of the "Weapon Knowledge" expertise.
 #define EXPERTISE_WEAPON_KNOWLEDGE (19)
 
 /// ID of the "Survival" expertise.
 #define EXPERTISE_SURVIVAL (20)
 
+/// ID of the "Psychology" expertise.
+#define EXPERTISE_PSYCHOLOGY (21)
+
+/// ID of the "Medical Sciences" expertise.
+#define EXPERTISE_MEDICAL_SCIENCES (22)
+
+/// ID of the "Crushing Technique" expertise.
+#define EXPERTISE_CRUSH_TECHNIQUE (23)
+
 /// ID of the "Creation" expertise.
 #define EXPERTISE_CREATION (31)
 
-/// ID of the "Gun knowledge" expertise.
+/// ID of the "Gun Knowledge" expertise.
 #define EXPERTISE_GUN_KNOWLEDGE (34)
+
+/// ID of the "Magic Control" expertise.
+#define EXPERTISE_MAGIC_CONTROL (36)
 
 /// ID of the "Swordsmith" chain expertise.
 #define EXPERTISE_CHAIN_SWORDSMITH (40)
@@ -151,11 +175,17 @@ namespace libcomp
 /// ID of the "Craftmanship" chain expertise.
 #define EXPERTISE_CHAIN_CRAFTMANSHIP (44)
 
-/// ID of the "Arms maker" chain expertise.
+/// ID of the "Arms Maker" chain expertise.
 #define EXPERTISE_CHAIN_ARMS_MAKER (46)
 
 /// ID of the "Synthesis" chain expertise.
 #define EXPERTISE_CHAIN_SYNTHESIS (49)
+
+/// ID of the "Curse of the Wretched" chain expertise.
+#define EXPERTISE_CHAIN_COTW (52)
+
+/// ID of the "Magic Bullet" chain expertise.
+#define EXPERTISE_CHAIN_M_BULLET (54)
 
 /// ID of the "Regal Presence" chain expertise.
 #define EXPERTISE_CHAIN_R_PRESENCE (57)
@@ -187,6 +217,15 @@ namespace libcomp
 
 /// Number of names that can be in the blacklist per account, per world.
 #define MAX_BLACKLIST_COUNT (50)
+
+/// Number of characters that can be on a PvP Team at once.
+#define MAX_TEAM_SIZE_PVP (50)
+
+/// Number of characters that can be on a Diaspora Team at once.
+#define MAX_TEAM_SIZE_DIASPORA (30)
+
+/// Number of characters that can be on a Cathedral Team at once.
+#define MAX_TEAM_SIZE_CATHEDRAL (10)
 
 /// Number of title entries that can be used to build a custom title.
 #define MAX_TITLE_PARTS (13)
@@ -224,6 +263,16 @@ namespace libcomp
 /// The skill activation contains fusion skill parameters.
 #define ACTIVATION_FUSION   (7)
 
+/// Minimum distance for all skills added to the target distance formula
+#define SKILL_DISTANCE_OFFSET (100)
+
+/// Default aggro range for any unbound AI controlled entity
+#define AI_DEFAULT_AGGRO_RANGE (800.f)
+
+/// Hitbox size of player character entities which do not have a defined
+/// DevilData entry
+#define PLAYER_HITBOX_SIZE (12)
+
 /// Macca note value
 #define ITEM_MACCA_NOTE_AMOUNT (50000)
 
@@ -247,6 +296,38 @@ namespace libcomp
 
 /// LNC alignment: Chaos
 #define LNC_CHAOS (4)
+
+/// Client selected revival mode to return to the homepoint
+#define REVIVE_HOMEPOINT (104)
+
+/// Client selected revival mode to respawn at the instance entrance
+/// or last zone in point
+#define REVIVE_INSTANCE_RESPAWN (105)
+
+/// Client selected revival mode to consume an item to revive
+#define REVIVE_ITEM (107)
+
+/// Client selected revival mode to allow ally revival
+#define REVIVE_ACCEPT_REVIVAL (108)
+
+/// Client selected revival mode to reject ally revival
+#define REVIVE_DENY_REVIVAL (109)
+
+/// Client selected revival mode to respawn at the PvP start point
+#define REVIVE_PVP_RESPAWN (596)
+
+/// Client selected revival mode to consume an item to revive in
+/// a demon only instance
+#define REVIVE_DEMON_SOLO_ITEM (664)
+
+/// Client selected revival mode to leave a demon only instance
+#define REVIVE_DEMON_SOLO_QUIT (665)
+
+/// Client selected revival mode to leave a Diaspora instance
+#define REVIVE_DIASPORA_QUIT (713)
+
+/// Client selected revival mode to leave a Ultimate Battle
+#define REVIVE_UB_QUIT (714)
 
 /// Search data index for the requestor's goal
 #define SEARCH_IDX_GOAL (1)
@@ -329,6 +410,39 @@ namespace libcomp
 /// Indicates that a tarot or soul option has been enabled for an item
 /// that by default cannot have an effect added
 #define ENCHANT_ENABLE_EFFECT (0x7FFF)
+
+/// Cooldown ID for the system Invoke law team
+#define COOLDOWN_INVOKE_LAW (-1)
+
+/// Cooldown ID for the system Invoke neutral team
+#define COOLDOWN_INVOKE_NEUTRAL (-2)
+
+/// Cooldown ID for the system Invoke chaos team
+#define COOLDOWN_INVOKE_CHAOS (-3)
+
+/// Cooldown ID for the system Invoke period where no team can be joined
+#define COOLDOWN_INVOKE_WAIT (-4)
+
+/// Minimum number of players needed to start a "Fate" PvP match
+#define PVP_FATE_PLAYER_MIN (12)
+
+/// Maximum number of players allowed to start a "Fate" PvP match
+#define PVP_FATE_PLAYER_MAX (30)
+
+/// Minimum number of players needed to start a "Valhalla" PvP match
+#define PVP_VALHALLA_PLAYER_MIN (6)
+
+/// Maximum number of players allowed to start a "Valhalla" PvP match
+#define PVP_VALHALLA_PLAYER_MAX (10)
+
+/// Diaspora phase where bosses spawn
+#define DIASPORA_PHASE_BOSS (4)
+
+/// Diaspora phase that indicates the end of a match
+#define DIASPORA_PHASE_END (5)
+
+/// Ultimate Battle max phase count
+#define UB_PHASE_MAX (5)
 
 /// Experience required to proceed from the indexed level to the next
 const unsigned long long LEVEL_XP_REQUIREMENTS[] = {
@@ -433,6 +547,20 @@ const unsigned long long LEVEL_XP_REQUIREMENTS[] = {
     565795254492ULL,    // 98->99
 };
 
+/// Login point totals required to reach specified clan levels
+const unsigned int CLAN_POINT_REQUIREMENT[] = {
+    0,               // 1
+    2000,            // 2
+    5000,            // 3
+    10000,           // 4
+    20000,           // 5
+    35000,           // 6
+    55000,           // 7
+    80000,           // 8
+    110000,          // 9
+    145000           // 10
+};
+
 /// Fusion gauge points gained by using a skill listed in the order of player
 /// character against lower level enemies, then equal or higher level, followed
 /// by demon against lower level enemies, then equal or higher level.
@@ -472,31 +600,6 @@ const unsigned char DEMON_FORCE_CONVERSION[20] = {
     21, // CRIT_DEF
     80, // RATE_XP
     79  // RES_STATUS
-};
-
-/// Maximum boost values for demon force stats. A single boost value is
-/// actually 100000 points data-side.
-const unsigned short DEMON_FORCE_MAX[20] = {
-    500,    // HP_MAX
-    100,    // MP_MAX
-    50,     // STR
-    50,     // MAGIC
-    50,     // VIT
-    50,     // INT
-    50,     // SPEED
-    50,     // LUCK
-    100,    // HP_REGEN
-    10,     // MP_REGEN
-    40,     // CLSR
-    40,     // LNGR
-    40,     // SPELL
-    40,     // SUPPORT
-    100,    // CRITICAL
-    5,      // PDEF
-    5,      // MDEF
-    100,    // CRIT_DEF
-    300,    // RATE_XP
-    50      // RES_STATUS
 };
 
 } // namespace libcomp

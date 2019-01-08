@@ -115,6 +115,19 @@ public:
     std::shared_ptr<BazaarState> GetBazaarState();
 
     /**
+     * Check if the state has a current event associated to it. Auto-only
+     * events do not apply here
+     * @return true if an event exists, false if one does not
+     */
+    bool HasActiveEvent() const;
+
+    /**
+     * Get the source entity ID of the state's current event if it exists
+     * @return Entity ID or 0 if not applicable
+     */
+    int32_t GetEventSourceEntityID() const;
+
+    /**
      * Get the shop ID of the state's current event if it is an
      * "open menu" type
      * @return Shop ID or 0 if not applicable
@@ -164,10 +177,12 @@ public:
      * Set the object ID associated a UUID associated to the client.
      * @param uuid UUID to set the corresponding object ID for
      * @param objectID Object ID to map to the UUID
-     * @return true if the UUID was not already registered, false
-     *  if it was
+     * @param allowReset Optional parameter to allow the UUID to be
+     *  cleared and registered again if it already exists
+     * @return true if the UUID was registered, false if it was not
      */
-    bool SetObjectID(const libobjgen::UUID& uuid, int64_t objectID);
+    bool SetObjectID(const libobjgen::UUID& uuid, int64_t objectID,
+        bool allowReset = false);
 
     /**
      * Get the UID of the account associated to the client.
@@ -207,6 +222,13 @@ public:
      * @return Current character's clan ID
      */
     int32_t GetClanID() const;
+
+    /**
+     * Get the current team ID associated to the logged in
+     * character.
+     * @return Current character's team ID
+     */
+    int32_t GetTeamID() const;
 
     /**
      * Get a current party character representation from the

@@ -6,17 +6,35 @@
         <member type="bool" name="LogoutSave" default="true"/>
         <member type="bool" name="AcceptRevival"/>
         <member type="bool" name="BikeBoosting"/>
+        <member type="bool" name="InstanceTimerActive"/>
+        <member type="u32" name="LastZoneID"/>
         <member type="u32" name="ZoneInSpotID"/>
+        <member type="u64" name="LogoutTimer"/>
         <member type="AccountLogin*" name="AccountLogin"/>
+        <member type="ChannelLogin*" name="ChannelLogin"
+            nulldefault="true"/>
         <member type="AccountWorldData*" name="AccountWorldData"/>
         <member type="EventState*" name="EventState"/>
         <member type="PlayerExchangeSession*" name="ExchangeSession"
             nulldefault="true"/>
         <member type="Party*" name="Party" nulldefault="true"/>
+        <member type="Team*" name="Team" nulldefault="true"/>
+        <member type="Match*" name="PendingMatch" nulldefault="true"/>
         <member type="s8" name="StatusIcon"/>
+        <member type="map" name="EventCounters">
+            <key type="s32"/>
+            <value type="EventCounter*"/>
+        </member>
         <member type="set" name="QuestTargetEnemies">
             <element type="u32"/>
         </member>
+        <member type="array" name="UltimateBattleData" size="2">
+            <element type="UBResult*"/>
+        </member>
+        <member type="array" name="PentalphaData" size="2">
+            <element type="PentalphaEntry*"/>
+        </member>
+        <member type="s32" name="InstanceBethel"/>
     </object>
     <object name="ClientCostAdjustment" persistent="false">
         <member type="u8" name="Category"/>
@@ -41,10 +59,11 @@
         <member type="EventSequence*" name="State"/>
         <member type="s32" name="SourceEntityID"/>
         <member type="u32" name="ActionGroupID"/>
-        <member type="u8" name="Index"/>
+        <member type="u16" name="Index"/>
         <member type="set" name="DisabledChoices">
             <element type="u8"/>
         </member>
+        <member type="bool" name="NoInterrupt"/>
     </object>
     <object name="PlayerExchangeSession" persistent="false">
         <member type="s32" name="SourceEntityID"/>

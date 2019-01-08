@@ -5,6 +5,7 @@
             <value>NONE</value>
             <value>CURRENT_HP</value>
             <value>CURRENT_MP</value>
+            <value>DIASPORA_MINIBOSS_COUNT</value>
             <value>DIGITALIZED</value>
             <value>EQUIPPED_WEAPON_TYPE</value>
             <value>EXPERTISE</value>
@@ -18,6 +19,7 @@
             <value>PARTNER_FAMILY</value>
             <value>PARTNER_RACE</value>
             <value>PARTNER_FAMILIARITY</value>
+            <value>PARTNER_MITAMA</value>
 
             <!-- Party -->
             <value>PARTY_DEMON_TYPE</value>
@@ -37,7 +39,6 @@
     </object>
     <object name="TokuseiSkillCondition" persistent="false" baseobject="TokuseiCondition">
         <member type="enum" name="Type" inherited="true" default="SKILL_STATE"/>
-        <member type="bool" name="TargetCondition" default="false"/>
         <member type="enum" name="SkillConditionType" underlying="int8_t">
             <value>ANY_SKILL</value>
             <value>EXPLICIT_SKILL</value>
@@ -50,10 +51,12 @@
             <value>DEMON_RACE</value>
             <value>DEMON_TITLE</value>
             <value>DEMON_PARTNER_MATCH</value>
+            <value>ENEMY_DIGITALIZED</value>
             <value>ENEMY_EQUIPPED</value>
             <value>ENEMY_FACTION</value>
             <value>ENEMY_GENDER</value>
             <value>ENEMY_LNC</value>
+            <value>ENEMY_TOKUSEI</value>
         </member>
     </object>
     <object name="TokuseiAttributes" persistent="false">
@@ -65,6 +68,7 @@
             <value>CORRECT_TABLE_DIVIDE</value>
             <value>BASE_AND_LEVEL</value>
             <value>PARTY_SIZE</value>
+            <value>HP_LTE</value>
 
             <!-- Custom multipliers -->
             <value>DEMON_BOOK_DIVIDE</value>
@@ -94,6 +98,7 @@
 
             <!-- Skill Processing -->
             <value>AFFINITY_CAP_MAX</value>
+            <value>BARRIER</value>
             <value>CLENCH_CHANCE</value>
             <value>CLENCH_REFLECT_CHANCE</value>
             <value>DAMAGE_DEALT</value>
@@ -130,10 +135,17 @@
             <value>DIGITALIZE_LENGTH</value>
             <value>DIGITALIZE_POINT_RATE</value>
 
+            <!-- Equipment Bound -->
+            <value>EQUIP_MOVE_DECAY</value>
+            <value>EQUIP_DECAY_XP</value>
+
             <!-- Misc -->
             <value>CONSTANT_STATUS</value>
+            <value>DEATH_PENALTY</value>
+            <value>SKILL_LOCK</value>
             <value>SUMMON_STATUS</value>
             <value>SUMMON_SYNC_EXTEND</value>
+            <value>ZONE_INSTANCE_POISON</value>
         </member>
         <member type="s32" name="Value"/>
         <member type="s32" name="Modifier"/>
@@ -152,6 +164,9 @@
             <element type="TokuseiCondition*"/>
         </member>
         <member type="list" name="SkillConditions">
+            <element type="TokuseiSkillCondition*"/>
+        </member>
+        <member type="list" name="SkillTargetConditions">
             <element type="TokuseiSkillCondition*"/>
         </member>
         <member type="list" name="CorrectValues">

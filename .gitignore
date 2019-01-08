@@ -1,7 +1,10 @@
 obj-*
 build*
+cmake-build-*
 debian/*.log
 deps/*.zip
+deps/objgen/
+deps/libobjects/
 binaries/
 
 *.sublime-project

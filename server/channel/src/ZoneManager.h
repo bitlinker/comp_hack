@@ -45,6 +45,7 @@ namespace objects
 {
 class ActionSpawn;
 class MiZoneData;
+class PvPInstanceVariant;
 class Spawn;
 }
 
@@ -116,6 +117,17 @@ public:
         uint32_t dynamicMapID);
 
     /**
+     * Get a zone by definition ID, dynamic map ID and (optionally)
+     * instance ID
+     * @param zoneID Definition ID of a zone to retrieve
+     * @param dynamicMapID Dynamic Map ID of the zone to retrieve
+     * @param instanceID Instance ID of a zone to retrieve
+     * @return Pointer to the zone associated to the supplied IDs
+     */
+    std::shared_ptr<Zone> GetExistingZone(uint32_t zoneID,
+        uint32_t dynamicMapID, uint32_t instanceID = 0);
+
+    /**
      * Perform all zone entry setup and related actions for a player
      * associated to the supplied client using the default starting point
      * @param client Client connection for the player entering the zone
@@ -160,22 +172,13 @@ public:
         bool logOut, uint32_t newZoneID = 0, uint32_t newDynamicMapID = 0);
 
     /**
-     * Create a zone instance with access granted for the client's current
-     * party
-     * @param client Client connection to create a zone instance for
-     * @param instanceID Definition ID of the instance to create
-     * @param variantID Optional ID of a variant definition to assign to
-     *  the instance
-     * @param timerID Optional ID of a timer to assign to the instance that
-     *  will be started when the first player enters
-     * @param timerExpirationEventID Optional ID of the event to execute if
-     *  the timer expires
-     * @return Pointer to the new zone instance, null if it failed to create
+     * Create a zone instance with access granted for the supplied CIDs
+     * @param access Pointer to the access definition
+     * @return 0 if it failed to create, 1 if it created local, 2 if a request
+     *  was sent to the world to create the instance 
      */
-    std::shared_ptr<ZoneInstance> CreateInstance(const std::shared_ptr<
-        ChannelClientConnection>& client, uint32_t instanceID,
-        uint32_t variantID = 0, uint32_t timerID = 0,
-        libcomp::String timerExpirationEventID = "");
+    uint8_t CreateInstance(
+        const std::shared_ptr<objects::InstanceAccess>& access);
 
     /**
      * Get a zone instance by ID
@@ -185,24 +188,84 @@ public:
     std::shared_ptr<ZoneInstance> GetInstance(uint32_t instanceID);
 
     /**
-     * Get the zone instance the supplied client has access to. If an instance
-     * is prepared that the character has not entered yet, it will be returned.
-     * If not and the client is currently in a zone instance, that will be
-     * returned instead.
-     * @param client Client connection to create a zone instance for
-     * @return Pointer to the zone instance, null if none exist
+     * Get the zone instance access available to the supplied world CID
+     * @param worldCID Character world CID
+     * @return Pointer to the zone access, null if none exist
      */
-    std::shared_ptr<ZoneInstance> GetInstanceAccess(const std::shared_ptr<
-        ChannelClientConnection>& client);
+    std::shared_ptr<objects::InstanceAccess> GetInstanceAccess(
+        int32_t worldCID);
 
     /**
-     * Remove access to a zone instance by unique ID. If any characters are
-     * in the zones, they will not be kicked and the instance will be cleaned
-     * up when the last player leaves.
-     * @param instanceID Unique ID of the instance to clean up
-     * @return true if the instance was cleaned up, false it was not
+     * Get or create a zone in the supplied instance. Useful for creating
+     * zones before anyone enters
+     * @param instance Pointer ot the instance to get the zone from
+     * @param zoneID Zone definition ID to get
+     * @param dynamicMapID Zone dynamic map ID to get
+     * @return Pointer to the zone, null if it failed to create
      */
-    bool ClearInstanceAccess(uint32_t instanceID);
+    std::shared_ptr<Zone> GetInstanceZone(const std::shared_ptr<
+        ZoneInstance>& instance, uint32_t zoneID, uint32_t dynamicMapID);
+
+    /**
+     * Get information about the correct zone and channel to log into for
+     * the supplied character
+     * @param character Pointer to the character attempting to log in
+     * @param zoneID Output parameter for the zone ID to log into
+     * @param dynamicMapID Output parameter for the dynamic map ID to log into
+     * @param channelID Output parameter for the channel to log into or
+     *  -1 if the channel does not matter
+     * @param x X coordinate for the zone login
+     * @param y Y coordinate for the zone login
+     * @param rot Rotation for the zone login (in radians)
+     * @return true if the zone was determined correctly, false if it was not
+     */
+    bool GetLoginZone(const std::shared_ptr<objects::Character>& character,
+        uint32_t& zoneID, uint32_t& dynamicMapID, int8_t& channelID,
+        float& x, float& y, float& rot);
+
+    /**
+     * Get or create the first zone in the supplied instance
+     * @param instance Pointer ot the instance to get the zone from
+     * @return Pointer to the zone, null if it failed to creat
+     */
+    std::shared_ptr<Zone> GetInstanceStartingZone(const std::shared_ptr<
+        ZoneInstance>& instance);
+
+    /**
+     * Get the coordinates of a match starting point in the supplied zone for
+     * the client
+     * @param client Pointer to the client connection entering the match
+     * @param zone Pointer to the zone the client is in
+     * @param x Output parameter containing the starting position x coord
+     * @param y Output parameter containing the starting position y coord
+     * @param rot Output parameter containing the starting position rotation
+     * @return true if the spot was found, false if it was not
+     */
+    bool GetMatchStartPosition(const std::shared_ptr<
+        ChannelClientConnection>& client, const std::shared_ptr<Zone>& zone,
+        float& x, float& y, float& rot);
+
+    /**
+     * Move the supplied client to the starting zone of the instance they
+     * are entering
+     * @param client Pointer to the client connection entering the instance
+     * @param access Pointer to the access definition, will be loaded from the
+     *  client if not specified
+     * @param diasporaEnter Optional indicator required to be set if the client
+     *  is entering a Diaspora instance as it's entrance criteria is unique
+     * @return true if the move was successful, false if it was not
+     */
+    bool MoveToInstance(const std::shared_ptr<ChannelClientConnection>& client,
+        std::shared_ptr<objects::InstanceAccess> access = nullptr,
+        bool diasporaEnter = false);
+
+    /**
+     * Move the supplied client to the lobby zone of the zone they are
+     * currently in
+     * @param client Pointer to the client connection to move
+     * @return true if the move was successful, false if it was not
+     */
+    bool MoveToLobby(const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
      * Send data about entities that exist in a zone to a new connection and
@@ -210,7 +273,8 @@ public:
      * @param client Client connection that was added to a zone
      * @return true if the client is in a zone, false if they are not
      */
-    bool SendPopulateZoneData(const std::shared_ptr<ChannelClientConnection>& client);
+    bool SendPopulateZoneData(const std::shared_ptr<
+        ChannelClientConnection>& client);
 
     /**
      * Send a request to a client to show an entity.
@@ -449,7 +513,68 @@ public:
         float y, float rot, const libcomp::String& aiType = "");
 
     /**
-     * Update the specified zone's SpawnLocationGroups
+     * Create an enemy (or ally) in the specified zone at set coordinates
+     * but do not add it to the zone yet
+     * @param zone Pointer to the zone where the entity should be spawned
+     * @param demonID Demon/enemy type ID to spawn
+     * @param spawnID Optional zone definition spawn ID
+     * @param spotID Optional spot ID to add the enemy to
+     * @param x X coordinate to render the enemy at
+     * @param y Y coordinate to render the enemy at
+     * @param rot Rotation to render the enemy with
+     * @return Pointer to the new ActiveEntityState
+     */
+    std::shared_ptr<ActiveEntityState> CreateEnemy(
+        const std::shared_ptr<Zone>& zone, uint32_t demonID, uint32_t spawnID,
+        uint32_t spotID, float x, float y, float rot);
+
+    /**
+     * Add enemies (or allies) already created in the zone, prepare AI and
+     * fire spawn triggers. Spawns can optionally be staggered and/or created
+     * as a single encounter that will fire the supplied action source actions
+     * when defeated.
+     * @param eStates Pointer to enemy or ally states to add to the zone
+     * @param zone Pointer to the zone where the entities should be added
+     * @param staggerSpawn If true the spawns will be staggered as they appear,
+     *  if false they will all appear at once
+     * @param asEncounter If true the enemies will be created as an encounter
+     *  and the supplied defeatActions will fire when the last one is defeated,
+     *  if false they will be normal spawns
+     * @param defeatActions List of defeat actions to fire when the enemies
+     *  are killed, should the be spawned in as an encounter
+     * @return true if the enemies were added successfully, false if an error
+     *  occurred
+     */
+    bool AddEnemiesToZone(
+        const std::list<std::shared_ptr<ActiveEntityState>>& eStates,
+        const std::shared_ptr<Zone>& zone, bool staggerSpawn, bool asEncounter,
+        const std::list<std::shared_ptr<objects::Action>>& defeatActions);
+
+    /**
+     * Add enemies (or allies) already created in the zone, prepare AI and
+     * fire spawn triggers. Spawns can optionally be staggered and/or created
+     * as a single encounter that will fire the supplied action source actions
+     * when defeated.
+     * @param eStates Pointer to enemy or ally states to add to the zone
+     * @param zone Pointer to the zone where the entities should be added
+     * @param staggerSpawn If true the spawns will be staggered as they appear,
+     *  if false they will all appear at once
+     * @param asEncounter If true the enemies will be created as an encounter
+     *  and the supplied defeatEventID will fire when the last one is defeated,
+     *  if false they will be normal spawns
+     * @param defeatEventID Event ID to fire from an action when the encounter
+     *  is defeated
+     * @return true if the enemies were added successfully, false if an error
+     *  occurred
+     */
+    bool AddEnemiesToZone(
+        std::list<std::shared_ptr<ActiveEntityState>> eStates,
+        const std::shared_ptr<Zone>& zone, bool staggerSpawn, bool asEncounter,
+        const libcomp::String& defeatEventID);
+
+    /**
+     * Update the specified zone's spawns from SpawnLocationGroups or
+     * SpawnGroups directly updated at specific spots
      * @param zone Pointer to the zone where the groups should be updated
      * @param refreshAll true if each group should be filled, false if only
      *  spawn groups with an elapsed refresh timer should be updated
@@ -461,12 +586,32 @@ public:
         uint64_t now = 0, std::shared_ptr<objects::ActionSpawn> actionSource = nullptr);
 
     /**
+     * Update the specified zone's staggered spawns, showing them to the
+     * zone if any are ready
+     * @param zone Pointer to the zone
+     * @param now Current server time
+     * @return true if any enemy was spawned, false if no enemy was spawned
+     */
+    bool UpdateStaggeredSpawns(const std::shared_ptr<Zone>& zone,
+        uint64_t now);
+
+    /**
      * Update the specified zone's PlasmaSpawns
      * @param zone Pointer to the zone where the plasma should be updated
      * @param now Current server time
      * @return true if any plasma was spawned or despawned
      */
     bool UpdatePlasma(const std::shared_ptr<Zone>& zone, uint64_t now = 0);
+
+    /**
+     * Fail the supplied client's current plasma minigame
+     * @param client Pointer to the client connection
+     * @param plasmaID Entity ID of the plasma currently being accessed
+     * @param pointID Optional specifier of the point being accessed. If
+     *  not specified, the current one will be found.
+     */
+    void FailPlasma(const std::shared_ptr<ChannelClientConnection>& client,
+        int32_t plasmaID, int8_t pointID = 0);
 
     /**
      * Updates the current states of entities in the zone.  Enemy AI is
@@ -506,11 +651,26 @@ public:
     bool StartInstanceTimer(const std::shared_ptr<ZoneInstance>& instance);
 
     /**
-     * Stop the timer currently assigned to the supplied zone instance
+     * Extend the timer currently assigned to the supplied zone instance.
+     * Only certain variants are valid. If the timer is successfully extended,
+     * the already assigned expiration event ID will be used
      * @param instance Pointer to a zone instance
+     * @param seconds Number of seconds the timer will be extended by
      * @return false if an error occurred
      */
-    bool StopInstanceTimer(const std::shared_ptr<ZoneInstance>& instance);
+    bool ExtendInstanceTimer(const std::shared_ptr<ZoneInstance>& instance,
+        uint32_t seconds);
+
+    /**
+     * Stop the timer currently assigned to the supplied zone instance
+     * @param instance Pointer to a zone instance
+     * @param stopTime Explicit stop time to use instead of the current
+     *  server time. This is useful for making sure the stop time does
+     *  not undershoot the actual expiration
+     * @return false if an error occurred
+     */
+    bool StopInstanceTimer(const std::shared_ptr<ZoneInstance>& instance,
+        uint64_t stopTime = false);
 
     /**
      * Send the timer currently assigned to the supplied zone instance to
@@ -521,10 +681,12 @@ public:
      *  sent the information.
      * @param queue true if the message should be queued, false if
      *  it should send right away
+     * @param extension Optional parameter to include as a one time "extension"
+     *  already added to the timer sent for certain packets
      */
     void SendInstanceTimer(const std::shared_ptr<ZoneInstance>& instance,
         const std::shared_ptr<ChannelClientConnection>& client = nullptr,
-        bool queue = false);
+        bool queue = false, uint32_t extension = 0);
 
     /**
      * Update the death time-out associated to the client and handle
@@ -570,12 +732,70 @@ public:
         bool isSuccess, bool queue = false);
 
     /**
+     * Update any zone specific entity tracking/state information and if
+     * the zone is marked for tracking and fall back to team tracking only
+     * if the whole zone should not be tracked. An example of a tracked
+     * zone is a Diaspora instance zone.
+     * @param zone Pointer to a zone to track
+     * @param team Optional pointer to the team to track if the zone is not
+     *  being tracked in itself
+     * @return true if the zone (or team) tracking was updated successfully,
+     *  false if it did not apply
+     */
+    bool UpdateTrackedZone(const std::shared_ptr<Zone>& zone,
+        const std::shared_ptr<objects::Team>& team = nullptr);
+
+    /**
+     * Update any team specific entity tracking/state information
+     * @param team Pointer to the team being tracked
+     * @param zone Optional pointer to the only zone the tracking information
+     *  should be updated for
+     * @return true if the team tracking was updated successfully, false if
+     *  it did not apply
+     */
+    bool UpdateTrackedTeam(const std::shared_ptr<objects::Team>& team,
+        const std::shared_ptr<Zone>& zone = nullptr);
+
+    /**
+     * Update the loot assigned to the destiny box assigned to a specific
+     * world CID
+     * @param instance Pointer to the instance the box belongs to
+     * @param worldCID World CID that has access to the box
+     * @param add List of pointers to loot to add
+     * @param remove Optional set of slots to clear before adding loot
+     * @return true if the updates occurred, false if they did not
+     */
+    bool UpdateDestinyBox(const std::shared_ptr<ZoneInstance>& instance,
+        int32_t worldCID, const std::list<std::shared_ptr<objects::Loot>>& add,
+        std::set<uint8_t> remove = {});
+
+    /**
+     * Send the current state of the destiny box a client has access to
+     * @param client Pointer to the client connection
+     * @param eventMenu true if the box is being viewed via the lotto event
+     *  menu, false if it is being viewed normally
+     * @param queue If true the packet will be queued instead of sent directly
+     */
+    void SendDestinyBox(const std::shared_ptr<ChannelClientConnection>& client,
+        bool eventMenu, bool queue = false);
+
+    /**
+     * Perform any updates related to multi-zone bosses being killed
+     * @param zone Pointer to the zone the bosses were killed in
+     * @param sourceState Pointer to the state of the player that killed the
+     *  bosses
+     * @param types List of enemy types for the bosses that
+     */
+    void MultiZoneBossKilled(const std::shared_ptr<Zone>& zone,
+        ClientState* sourceState, const std::list<uint32_t>& types);
+
+    /**
      * Trigger specific zone actions for the specified zone for a set of
      * source entities
      * @param zone Pointer to a zone
      * @param entities List of pointers to entities that will be used as
      *  source entities for each action
-     * @param trigger Type of trigger to first
+     * @param trigger Type of trigger to execute
      * @param client Pointer to the client to use for the executing action
      *  contexts
      * @return true if at least one action trigger was fired, false if no
@@ -583,6 +803,31 @@ public:
      */
     bool TriggerZoneActions(const std::shared_ptr<Zone>& zone, std::list<
         std::shared_ptr<ActiveEntityState>> entities, ZoneTrigger_t trigger,
+        const std::shared_ptr<ChannelClientConnection>& client = nullptr);
+
+    /**
+     * Gather zone specific triggers
+     * @param zone Pointer to a zone
+     * @param trigger Type of trigger to retrieve
+     * @return List of pointers to the matching zone triggers
+     */
+    std::list<std::shared_ptr<objects::ServerZoneTrigger>> GetZoneTriggers(
+        const std::shared_ptr<Zone>& zone, ZoneTrigger_t trigger);
+
+    /**
+     * Handle zone specific actions from triggers for either the entire zone
+     * or one specific entity
+     * @param zone Pointer to a zone
+     * @param triggers List of pointers to triggers from the zone
+     * @param entity Optional pointer to the entity to trigger the actions for.
+     *  If not specified the entire zone will be used (with no source).
+     * @param client Optional pointer to the entity's client
+     * @return true if at least one action trigger was fired, false if no
+     *  action triggers were fired
+     */
+    bool HandleZoneTriggers(const std::shared_ptr<Zone>& zone,
+        const std::list<std::shared_ptr<objects::ServerZoneTrigger>>& triggers,
+        const std::shared_ptr<ActiveEntityState>& entity = nullptr,
         const std::shared_ptr<ChannelClientConnection>& client = nullptr);
 
     /**
@@ -598,7 +843,7 @@ public:
 
     /**
      * Get the X/Y coordinates and rotation of the center point of a spot.
-     * @param dynamaicMapID Dynamic map ID of the zone containing the spot
+     * @param dynamicMapID Dynamic map ID of the zone containing the spot
      * @param spotID Spot ID to find the center of
      * @param x Default X position to use if the spot is not found, changes
      *  to the spot center X coordinate if found
@@ -640,11 +885,13 @@ public:
      * @param distance Distance to move
      * @param away true if the point calculated should be futher from the
      *  target point, false if it should be closer to it
+     * @param zone Optional pointer to the zone to check against collision
      * @return X, Y coordinates at the specified point not adjusted for
      *  collisions
      */
     Point GetLinearPoint(float sourceX, float sourceY,
-        float targetX, float targetY, float distance, bool away);
+        float targetX, float targetY, float distance, bool away,
+        const std::shared_ptr<Zone>& zone = nullptr);
 
     /**
      * Set an entity's destination position at a distace directly away or
@@ -662,6 +909,19 @@ public:
     Point MoveRelative(const std::shared_ptr<ActiveEntityState>& eState,
         float targetX, float targetY, float distance, bool away,
         uint64_t now, uint64_t endTime);
+
+    /**
+     * Calculate the shortest path between the supplied source and destination
+     * points for the specified zone
+     * @param zone Pointer to the zone
+     * @param source Source point
+     * @param dest Destination point
+     * @param maxDistance Optional max distance for the path
+     * @return List of the full shortest path (starting with the source and
+     *  ending with the destination) or empty if no path is possible
+     */
+    std::list<Point> GetShortestPath(const std::shared_ptr<Zone>& zone,
+        const Point& source, const Point& dest, float maxDistance = 0.f);
 
     /**
      * Determine if the specified point is within a polygon defined by vertices
@@ -694,6 +954,16 @@ public:
      */
     static Point RotatePoint(const Point& p, const Point& origin, float radians);
 
+    /**
+     * Sync updates and removals to InstanceAccess definitions that belong
+     * to this server or any other one
+     * @param updates List of updated InstanceAccess definitions
+     * @param removes List of removed InstanceAccess definitions
+     */
+    void SyncInstanceAccess(
+        std::list<std::shared_ptr<objects::InstanceAccess>> updates,
+        std::list<std::shared_ptr<objects::InstanceAccess>> removes);
+
 private:
     /**
      * Select a spot for a spawn group and get it's location.
@@ -716,14 +986,50 @@ private:
         std::list<std::shared_ptr<objects::SpawnLocation>>& locations);
 
     /**
+     * Move the supplied client from the current channel to another based upon
+     * the zone being moved to. This will cause the client to log out upon
+     * success.
+     * @param client Pointer to the client connection
+     * @param zoneID ID of the zone being entered
+     * @param dynamicMapID ID of the dynamic map being entered
+     * @param toInstance If supplied, the zone and dynamic map belong to an
+     *  instance and the access should be used
+     * @param x X coordinate to use in the new zone, ignored for instances
+     * @param y Y coordinate to use in the new zone, ignored for instances
+     * @param rot Rotation to use in the new zone (in radians), ignored for
+     *  instances
+     * @return true if the client was moved, false if they either didn't
+     *  need to move or the move failed
+     */
+    bool MoveToZoneChannel(
+        const std::shared_ptr<ChannelClientConnection>& client,
+        uint32_t zoneID, uint32_t dynamicMapID,
+        const std::shared_ptr<objects::InstanceAccess>& toInstance,
+        float x = 0.f, float y = 0.f, float rot = 0.f);
+
+    /**
+     * Calculate the shortest path between the supplied source and destination
+     * Qmp points in the same zone geometry. Path optimization between points
+     * is up to the caller to perform.
+     * @param geometry Pointer to a zone geometry definition
+     * @param sourceID Source point ID
+     * @param destID Destination point ID
+     * @return List of the shortest path of points to move to in order
+     */
+    std::list<uint32_t> GetShortestPath(
+        const std::shared_ptr<ZoneGeometry>& geometry,
+        uint32_t sourceID, uint32_t destID);
+
+    /**
      * Create an enemy (or ally) in the specified zone at set coordinates
+     * but do not add it to the zone yet
      * @param zone Pointer to the zone where the entity should be spawned
      * @param demonID Demon/enemy type ID to spawn
      * @param spawn Optional pointer to the entity's spawn definition
      * @param x X coordinate to render the enemy at
      * @param y Y coordinate to render the enemy at
      * @param rot Rotation to render the enemy with
-     * @return Pointer to the new enemy state
+     * @return Pointer to the new ActiveEntityState
      */
     std::shared_ptr<ActiveEntityState> CreateEnemy(
         const std::shared_ptr<Zone>& zone, uint32_t demonID,
@@ -732,33 +1038,49 @@ private:
 
     /**
      * Send entity information about an enemy in a zone
-     * @param client Pointer to the client connection to send to or use as
-     *  an identifier for the zone to send to
      * @param enemyState Enemy state to use to report enemy data to the clients
+     * @param client Pointer to the client connection to send to if specified
+     *  instead of the whole zone
      * @param zone Pointer to the zone where the enemy exists
-     * @param sendToAll true if all clients in the zone should be sent the data
-     *  false if just the supplied client should be sent to
      * @param queue true if the message should be queued, false if
      *  it should send right away
      */
-    void SendEnemyData(const std::shared_ptr<ChannelClientConnection>& client,
-        const std::shared_ptr<EnemyState>& enemyState,
-        const std::shared_ptr<Zone>& zone, bool sendToAll, bool queue = false);
+    void SendEnemyData(const std::shared_ptr<EnemyState>& enemyState,
+        const std::shared_ptr<ChannelClientConnection>& client,
+        const std::shared_ptr<Zone>& zone, bool queue = false);
 
     /**
      * Send entity information about an ally in a zone
-     * @param client Pointer to the client connection to send to or use as
-     *  an identifier for the zone to send to
      * @param allyState Ally state to use to report ally data to the clients
+     * @param client Pointer to the client connection to send to if specified
+     *  instead of the whole zone
      * @param zone Pointer to the zone where the ally exists
-     * @param sendToAll true if all clients in the zone should be sent the data
-     *  false if just the supplied client should be sent to
      * @param queue true if the message should be queued, false if
      *  it should send right away
      */
-    void SendAllyData(const std::shared_ptr<ChannelClientConnection>& client,
-        const std::shared_ptr<AllyState>& allyState,
-        const std::shared_ptr<Zone>& zone, bool sendToAll, bool queue = false);
+    void SendAllyData(const std::shared_ptr<AllyState>& allyState,
+        const std::shared_ptr<ChannelClientConnection>& client,
+        const std::shared_ptr<Zone>& zone, bool queue = false);
+
+    /**
+     * Schedule the expiration of a zone instance timer
+     * @param instance Pointer to the zone instance with a timer set
+     */
+    void ScheduleTimerExpiration(const std::shared_ptr<ZoneInstance>& instance);
+
+    /**
+     * Determine if the supplied boss EnemyState is valid to add to a
+     * multi-zone boss group
+     * @param enemyState Pointer to the boss EnemyState
+     * @return true if the boss can be added, false if it cannot
+     */
+    bool ValidateBossGroup(const std::shared_ptr<EnemyState>& enemyState);
+
+    /**
+     * Send the current multi-zone boss statuses in the supplied group
+     * @param groupID Multi-zone boss group to update
+     */
+    void SendMultiZoneBossStatus(uint32_t groupID);
 
     /**
      * Perform all necessary despawns for the supplied zone.
@@ -802,25 +1124,61 @@ private:
         uint32_t currentInstanceID = 0);
 
     /**
-     * Get a zone by zone definition ID that belongs to an instance. If
-     * the zone does not exist, it will be created and added to the instance.
-     * @param instance Pointer to the instance the zone will be retrieved
-     *  from or created for
-     * @param zoneID Zone definition ID to get a zone for
-     * @param dynamicMapID Dynamic Map ID of the zone to to get a zone for
-     * @return Pointer to the new or existing zone
-     */
-    std::shared_ptr<Zone> GetInstanceZone(
-        std::shared_ptr<ZoneInstance> instance, uint32_t zoneID,
-        uint32_t dynamicMapID);
-
-    /**
      * Create a new zone based off of the supplied definition
      * @param definition Pointer to a zone definition
+     * @param instance Optional pointer to the instance the zone will belong to
      * @return Pointer to a new zone
      */
     std::shared_ptr<Zone> CreateZone(
-        const std::shared_ptr<objects::ServerZone>& definition);
+        const std::shared_ptr<objects::ServerZone>& definition,
+        const std::shared_ptr<ZoneInstance>& instance = nullptr);
+
+    /**
+     * All all PvP bases defined in a zone from the variant
+     * @param zone Pointer to the zone
+     * @param variant Pointer to the PvP instance variant
+     */
+    void AddPvPBases(const std::shared_ptr<Zone>& zone,
+        const std::shared_ptr<objects::PvPInstanceVariant>& variant);
+
+    /**
+     * All all Diaspora bases defined in a zone from the variant
+     * @param zone Pointer to the zone
+     */
+    void AddDiasporaBases(const std::shared_ptr<Zone>& zone);
+
+    /**
+     * Determine if the suppplied client has access to enter a restricted
+     * zone
+     * @param client Pointer to the client attempting to enter the zone
+     * @param zone Pointer to the restricted zone
+     */
+    bool CanEnterRestrictedZone(
+        const std::shared_ptr<ChannelClientConnection>& client,
+        const std::shared_ptr<Zone>& zone);
+
+    /**
+     * Send InstanceAccess create or join messages to either one player or
+     * all players that have access to it
+     * @param access Pointer to the InstanceAccess
+     * @param joined If true the join message will be sent, if false the
+     *  create message will be sent
+     * @param client Pointer to a client connection that has access to the
+     *  instance. If null all players that have access to the instance will
+     *  be sent the message instead
+     */
+    void SendAccessMessage(
+        const std::shared_ptr<objects::InstanceAccess>& access, bool joined,
+        const std::shared_ptr<ChannelClientConnection>& client = nullptr);
+
+    /**
+     * Remove and clean up all zone information for a specific zone
+     * @param zone Pointer to the zone
+     * @param freezeOnly If true, the zone will only be frozen and removed
+     *  from all affected cache data members, if false it will be fully
+     *  removed
+     */
+    void RemoveZone(const std::shared_ptr<Zone>& zone, bool freezeOnly);
 
     /**
      * Remove a zone instance by unique ID if no characters have access
@@ -850,6 +1208,14 @@ private:
     bool RegisterTimeRestrictions(const std::shared_ptr<Zone>& zone,
         const std::shared_ptr<objects::ServerZone>& definition);
 
+    /**
+     * Gather all world clock representations of the supplied time triggers
+     * @param triggers List of pointers to time triggers
+     * @return List of world clock representations
+     */
+    std::list<WorldClockTime> GetTriggerTimes(
+        const std::list<std::shared_ptr<objects::ServerZoneTrigger>>& triggers);
+
     /// Map of zones by unique ID
     std::unordered_map<uint32_t, std::shared_ptr<Zone>> mZones;
 
@@ -861,10 +1227,11 @@ private:
     /// Map of zone instances by unique ID
     std::unordered_map<uint32_t, std::shared_ptr<ZoneInstance>> mZoneInstances;
 
-    /// Map of world CIDs to the zone instances they have access to. The
+    /// Map of world CIDs to the zone instance access definitions. The
     /// moment a character enters the zone, they are removed from this map
     /// as they are not able to intentionally re-enter
-    std::unordered_map<int32_t, uint32_t> mZoneInstanceAccess;
+    std::unordered_map<int32_t,
+        std::shared_ptr<objects::InstanceAccess>> mZoneInstanceAccess;
 
     /// Map of world CIDs to zone unique IDs
     std::unordered_map<int32_t, uint32_t> mEntityMap;
@@ -877,11 +1244,18 @@ private:
     /// corresponding binary definitions
     std::unordered_map<uint32_t, std::shared_ptr<DynamicMap>> mDynamicMaps;
 
+    /// Map of global boss group IDs to zones in that group on the server
+    std::unordered_map<uint32_t, std::set<uint32_t>> mGlobalBossZones;
+
     /// Set of all zones that should be considered active when
     /// updating states. When a zone is removed from this set but
     /// not removed entirely, its AI etc will be frozen until a player
     /// enters the zone again.
     std::set<uint32_t> mActiveZones;
+
+    /// Set of IDs for all zones that are both active and configured for
+    /// team, full zone or boss tracking
+    std::set<uint32_t> mActiveTrackedZones;
 
     /// Set of all zone IDs, active or not, that have had a time restricted
     /// update performed on them. This can be thought of as temporarily
@@ -897,6 +1271,13 @@ private:
     /// time triggering
     std::map<WorldClockTime, std::set<uint32_t>> mSpawnTimeRestrictZones;
 
+    /// List of zone-detached global time triggers that fire independent of
+    /// any zone
+    std::list<std::shared_ptr<objects::ServerZoneTrigger>> mGlobalTimeTriggers;
+
+    /// Next server time that tracked zones will be refreshed during
+    ServerTime mTrackingRefresh;
+
     /// Next available zone unique ID
     uint32_t mNextZoneID;
 
@@ -905,6 +1286,9 @@ private:
 
     /// Server lock for shared resources
     std::mutex mLock;
+
+    /// Server lock for creating or getting existing zones in an instance
+    std::mutex mInstanceZoneLock;
 
     /// Pointer to the channel server
     std::weak_ptr<ChannelServer> mServer;

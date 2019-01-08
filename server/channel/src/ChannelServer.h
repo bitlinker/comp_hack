@@ -66,6 +66,7 @@ class CharacterManager;
 class ChatManager;
 class EventManager;
 class FusionManager;
+class MatchManager;
 class SkillManager;
 class TokuseiManager;
 class ZoneManager;
@@ -145,6 +146,12 @@ public:
      * @return Pointer to the RegisteredChannel
      */
     const std::shared_ptr<objects::RegisteredChannel> GetRegisteredChannel();
+
+    /**
+     * Get the current channel ID from the RegisteredChannel
+     * @return Current channel ID
+     */
+    uint8_t GetChannelID();
 
     /**
      * Get all channels registerd on the channel's world (including
@@ -254,6 +261,12 @@ public:
     FusionManager* GetFusionManager() const;
 
     /**
+     * Get a pointer to the match manager.
+     * @return Pointer to the MatchManager
+     */
+    MatchManager* GetMatchManager() const;
+
+    /**
      * Get a pointer to the skill manager.
      * @return Pointer to the SkillManager
      */
@@ -338,6 +351,12 @@ public:
         libcomp::String message, int8_t type, bool broadcast);
 
     /**
+     * Get the configured server time offset in seconds.
+     * @return Server time offset in seconds
+     */
+    int32_t GetServerTimeOffset();
+
+    /**
      * Get the system time deadline for all punitive attributes
      * which matches midnight of the next Monday. Punitive atributes
      * are used for time restricted actions such as participation in
@@ -351,6 +370,13 @@ public:
      * @return Default character creation object map
      */
     PersistentObjectMap GetDefaultCharacterObjectMap() const;
+
+    /**
+     * Schedule recurring actions that continue to run until the server shuts
+     * down. This does not need to run until the channel has successfully
+     * registered with the world.
+     */
+    void ScheduleRecurringActions();
 
     /**
      * Register a timed event to occur when the world clock is updated to
@@ -451,6 +477,7 @@ protected:
     /// 1) Spawn activation/deactivation
     /// 2) Tokusei active timespans
     /// 3) Zone event trigger
+    /// 4) Global zone event trigger
     std::map<WorldClockTime, std::set<uint8_t>> mWorldClockEvents;
 
     /// Pointer to the manager in charge of connection messages.
@@ -495,6 +522,9 @@ protected:
     /// Pointer to the Fusion Manager.
     FusionManager *mFusionManager;
 
+    /// Pointer to the Match Manager.
+    MatchManager *mMatchManager;
+
     /// Pointer to the Skill Manager.
     SkillManager *mSkillManager;
 
@@ -533,6 +563,10 @@ protected:
     /// Highest unique object ID currently assigned
     int64_t mMaxObjectID;
 
+    /// Inidicates how many tick messages are sitting in the queue.
+    /// Incremented by StartTick and decremented by Tick.
+    uint8_t mTicksPending;
+
     /// Thread that queues up tick messages after a delay.
     std::thread mTickThread;
 
@@ -541,6 +575,9 @@ protected:
 
     /// Server lock for server time calculation
     std::mutex mTimeLock;
+
+    /// Server lock for setting the tick pending indicator
+    std::mutex mTickLock;
 
     /// If the tick thread should continue running.
     volatile bool mTickRunning;

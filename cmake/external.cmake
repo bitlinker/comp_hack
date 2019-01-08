@@ -18,6 +18,8 @@
 # Enable the ExternalProject CMake module.
 INCLUDE(ExternalProject)
 
+IF(NOT UPDATER_ONLY)
+
 OPTION(GIT_DEPENDENCIES "Download dependencies from Git instead." OFF)
 
 IF(WIN32)
@@ -68,6 +70,8 @@ SET_TARGET_PROPERTIES(gsl PROPERTIES FOLDER "Dependencies")
 SET(GSL_INCLUDE_DIRS "${SOURCE_DIR}/include")
 
 FILE(MAKE_DIRECTORY "${GSL_INCLUDE_DIRS}")
+
+ENDIF(NOT UPDATER_ONLY)
 
 IF(EXISTS "${CMAKE_SOURCE_DIR}/deps/zlib.zip")
     SET(ZLIB_URL
@@ -129,6 +133,8 @@ ENDIF()
 
 SET_TARGET_PROPERTIES(zlib PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${ZLIB_INCLUDES}")
+
+IF(NOT UPDATER_ONLY)
 
 IF(EXISTS "${CMAKE_SOURCE_DIR}/deps/openssl.zip")
     SET(OPENSSL_URL
@@ -237,8 +243,8 @@ ELSEIF(GIT_DEPENDENCIES)
     )
 ELSE()
     SET(MARIADB_URL
-        URL https://github.com/comphack/mariadb/archive/comp_hack-20180425.zip
-        URL_HASH SHA1=e3cccd1ce7338ecf21864c507579d24f5c9a234a
+        URL https://github.com/comphack/mariadb/archive/comp_hack-20181016.zip
+        URL_HASH SHA1=85cba1f2cd41ed44a7d517dcd7bb004e79267353
     )
 ENDIF()
 
@@ -870,3 +876,5 @@ ENDIF()
 
 SET_TARGET_PROPERTIES(jsonbox PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${JSONBOX_INCLUDE_DIRS}")
+
+ENDIF(NOT UPDATER_ONLY)

@@ -78,9 +78,11 @@ enum class SkillErrorCodes_t : uint8_t
     ACTIVATION_FAILURE = 4,   //!< Cannot be activated
     COOLING_DOWN = 5,   //!< Cool down has not completed
     ACTION_RETRY = 6,   //!< No message, request that client pursue and retry
+    TOO_FAR = 8,   //!< The skill was too far away when execution was attempted
     CONDITION_RESTRICT = 10,    //!< Skill is not in a useable state
     LOCATION_RESTRICT = 11, //!< Cannot be used in the current location
     ITEM_USE = 12,  //!< Item cannot have its skill used
+    SILENT_FAIL = 13, //!< Skill cannot be used but don't print an error
     TALK_INVALID = 21,  //!< Target cannot be talked to
     TALK_LEVEL = 22,    //!< Target's level is too high and cannot be talked
     TALK_WONT_LISTEN = 23,  //!< Target refuses to listen to talk skills
@@ -109,12 +111,30 @@ enum class SkillErrorCodes_t : uint8_t
     MOOCH_PARTNER_TOO_FAR = 60, //!< Partner demon is too far away for mooch
     INVENTORY_SPACE_PRESENT = 61,   //!< Inventory space needed to recieve demon present
     INVENTORY_SPACE = 63,   //!< Inventory space needed to receive item
-    NOTHING_HAPPNED_NOW = 68,   //!< Nothing happened currently
-    NOTHING_HAPPNED_HERE = 69,  //!< Nothing happened in the current place
+    NOTHING_HAPPENED_NOW = 68,   //!< Nothing happened currently
+    NOTHING_HAPPENED_HERE = 69,  //!< Nothing happened in the current place
     TIME_RESTRICT = 71, //!< Time invalid for use
     ZONE_INVALID = 72,  //!< Target zone is not valid
     PARTNER_INCOMPATIBLE = 75,  //!< Partner demon is incompatible
     RESTRICED_USE = 76, //!< Skill use restricted
+};
+
+/**
+ * Error codes used for party actions by the game client.
+ */
+enum class PartyErrorCodes_t : uint16_t
+{
+    GENERIC_ERROR = 199,    //!< Generic system error
+    SUCCESS = 200,  //!< No error
+    INVALID_OR_OFFLINE = 201,   //!< Target character either does not exist or is offline
+    IN_PARTY = 202, //!< Player is already in a party
+    INVALID_PARTY = 203,    //!< Request for invalid party received
+    NO_LEADER = 204,    //!< Party does not have a leader (not sure why this would happen)
+    NO_PARTY = 205, //!< Player is not in a party
+    INVALID_MEMBER = 206,   //!< Party member being requested is invalid
+    PARTY_FULL = 207,   //!< Party is full and cannot be joined or invited to
+    LEADER_REQUIRED = 208,  //!< Leader required update attempted by non-leader
+    INVALID_TARGET  = 209,   //!< Target is invalid
 };
 
 /**
@@ -130,6 +150,38 @@ enum class EntrustErrorCodes_t : int32_t
     INVENTORY_SPACE_NEEDED = -6,    //!< More inventory space needed
     INVALID_DEMON_STATE = -8,   //!< Demon is not in a state to perform action
     INVALID_DEMON_TARGET = -9,  //!< Demon is not a valid target
+};
+
+/**
+ * Error codes used for team actions by the game client.
+ */
+enum class TeamErrorCodes_t : int8_t
+{
+    SUCCESS = 0,    //!< No error
+    GENERIC_ERROR = -1, //!< Unspecified error
+    LEADER_REQUIRED = -3,   //!< Leader required update attempted by non-leader
+    INVALID_TARGET  = -4,   //!< Target is invalid
+    NO_TEAM = -5,   //!< No current team exists
+    OTHER_TEAM = -6, //!< A different team already exists
+    INVALID_TARGET_STATE = -7,  //!< Target is not in a valid team request state
+    MATCH_ACTIVE = -8,  //!< A match is currently active and the operation is not allowed
+    INVALID_TEAM = -9,  //!< Requested team is not valid
+    TEAM_FULL = -10,    //!< Requested team is full
+    AWAITING_ENTRY = -11,   //!< Request invalid due to match entry queue
+    PENALTY_ACTIVE = -12,   //!< Request invalid due to too many PvP penalties
+    MODE_REQUIREMENTS = -13,    //!< Mode requirements are not met
+    MATCH_ACTIVE_REJECT = -14,  //!< Target is in an active match and the operation is not allowed
+    AWAITING_ENTRY_REJECT = -15,    //!< Requested target invalid due to match entry queue
+    PENALTY_ACTIVE_REJECT = -16,    //!< Requested target invalid due to too many PvP penalties
+    MODE_REQUIREMENTS_REJECT = -17, //!< Requested target mode requirements are not met
+    TARGET_IN_PARTY = -19,  //!< Target is in a party and cannot join a team
+    TARGET_DIASPORA_INVALID = -20,  //!< Target cannot enter a disapora team right now
+    TARGET_VALUABLE_MISSING = -21,  //!< Target is missing a valuable required to be in the team
+    TARGET_COOLDOWN_20H = -22,  //!< Target team cooldown has not completed
+    IN_PARTY = -24, //!< Party exists and team cannot be formed
+    VALUABLE_MISSING = -25, //!< Valuable required is missing to form the team
+    COOLDOWN_20H = -27, //!< Team cooldown has not completed
+    ZONE_INVALID = -28, //!< Zone the requestor is in does not support the team type
 };
 
 #endif // LIBCOMP_SRC_ERRORCODES_H

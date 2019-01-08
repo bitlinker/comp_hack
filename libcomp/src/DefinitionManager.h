@@ -28,7 +28,9 @@
 #define LIBCOMP_SRC_DEFINITIONMANAGER_H
 
 // Standard C++14 Includes
+#include <PushIgnore.h>
 #include <gsl/gsl>
+#include <PopIgnore.h>
 
 // libcomp Includes
 #include "CString.h"
@@ -48,10 +50,10 @@ class EnchantSpecialData;
 class MiAIData;
 class MiBlendData;
 class MiBlendExtData;
+class MiCHouraiData;
 class MiCItemData;
 class MiCorrectTbl;
 class MiCultureItemData;
-class MiCZoneRelationData;
 class MiDevilBookData;
 class MiDevilBoostData;
 class MiDevilBoostExtraData;
@@ -68,8 +70,16 @@ class MiEnchantData;
 class MiEquipmentSetData;
 class MiExchangeData;
 class MiExpertData;
+class MiGuardianAssistData;
+class MiGuardianLevelData;
+class MiGuardianSpecialData;
+class MiGuardianUnlockData;
 class MiHNPCData;
 class MiItemData;
+class MiMissionData;
+class MiMitamaReunionBonusData;
+class MiMitamaReunionSetBonusData;
+class MiMitamaUnionBonusData;
 class MiModificationData;
 class MiModificationExtEffectData;
 class MiModificationExtRecipeData;
@@ -86,9 +96,11 @@ class MiSpotData;
 class MiSStatusData;
 class MiStatusData;
 class MiSynthesisData;
+class MiTankData;
 class MiTimeLimitData;
 class MiTitleData;
 class MiTriUnionSpecialData;
+class MiUraFieldTowerData;
 class MiWarpPointData;
 class MiZoneData;
 class QmpFile;
@@ -138,6 +150,13 @@ public:
      *  null if it does not exist
      */
     const std::shared_ptr<objects::MiBlendExtData> GetBlendExtData(uint32_t id);
+
+    /**
+     * Get the client-side hourai NPC definitions by ID
+     * @return Map of client-side hourai NPC definitions by ID
+     */
+    std::unordered_map<int8_t,
+        std::shared_ptr<objects::MiCHouraiData>> GetCHouraiData();
 
     /**
      * Get the culture item definition corresponding to an ID
@@ -235,9 +254,9 @@ public:
         GetDevilEquipmentItemData(uint32_t itemID);
 
     /**
-     * Get the devil equipment item definition corresponding to an ID
-     * @param id Devil equipment item ID to retrieve
-     * @return Pointer to the matching devil equipment item definition, null if
+     * Get the fusion skill definition corresponding to an ID
+     * @param id Fusion skill ID to retrieve
+     * @return Pointer to the matching fusion skill definition, null if
      *  it does not exist
      */
     const std::shared_ptr<objects::MiDevilFusionData>
@@ -389,6 +408,48 @@ public:
         uint8_t raceID);
 
     /**
+     * Get the guardian assist information corresponding to an ID
+     * @param id Guardian assist ID to retrieve
+     * @return Pointer to the matching guardian assist information, null
+     *  if it does not exist
+     */
+    const std::shared_ptr<objects::MiGuardianAssistData> GetGuardianAssistData(
+        uint32_t id);
+
+    /**
+     * Get all guardian race IDs with defined level information
+     * @return Set of all guardian race IDs
+     */
+    const std::set<uint8_t> GetGuardianRaceIDs();
+
+    /**
+     * Get the guardian level information corresponding to an ID
+     * @param id Guardian level ID to retrieve
+     * @return Pointer to the matching guardian level information, null
+     *  if it does not exist
+     */
+    const std::shared_ptr<objects::MiGuardianLevelData> GetGuardianLevelData(
+        uint32_t id);
+
+    /**
+     * Get the guardian special information corresponding to an ID
+     * @param id Guardian special ID to retrieve
+     * @return Pointer to the matching guardian special information, null
+     *  if it does not exist
+     */
+    const std::shared_ptr<objects::MiGuardianSpecialData> GetGuardianSpecialData(
+        uint32_t id);
+
+    /**
+     * Get the guardian unlock information corresponding to an ID
+     * @param id Guardian unlock ID to retrieve
+     * @return Pointer to the matching guardian unlock information, null
+     *  if it does not exist
+     */
+    const std::shared_ptr<objects::MiGuardianUnlockData> GetGuardianUnlockData(
+        uint32_t id);
+
+    /**
      * Get the human NPC definition corresponding to an ID
      * @param id Human NPC ID to retrieve
      * @return Pointer to the matching human NPC definition, null if it does
@@ -412,6 +473,40 @@ public:
      */
     const std::shared_ptr<objects::MiItemData> GetItemData(
         const libcomp::String& name);
+
+    /**
+     * Get the mission definition corresponding to an ID
+     * @param id Mission ID to retrieve
+     * @return Pointer to the matching mission definition, null if it does
+     *  not exist
+     */
+    const std::shared_ptr<objects::MiMissionData> GetMissionData(uint32_t id);
+
+    /**
+     * Get the mitama reunion bonus definition corresponding to an ID
+     * @param id Mitama reunion bonus ID to retrieve
+     * @return Pointer to the matching mitama reunion bonus definition,
+     *  null if it does not exist
+     */
+    const std::shared_ptr<objects::MiMitamaReunionBonusData>
+        GetMitamaReunionBonusData(uint32_t id);
+
+    /**
+     * Get all mitama reunion set bonus definitions by ID
+     * @return Mitama reunion set bonus definitions by ID
+     */
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiMitamaReunionSetBonusData>>
+        GetMitamaReunionSetBonusData();
+
+    /**
+     * Get the mitama union bonus definition corresponding to an ID
+     * @param id Mitama union bonus ID to retrieve
+     * @return Pointer to the matching mitama union bonus definition,
+     *  null if it does not exist
+     */
+    const std::shared_ptr<objects::MiMitamaUnionBonusData>
+        GetMitamaUnionBonusData(uint32_t id);
 
     /**
      * Get the item modification definition corresponding to an ID
@@ -524,12 +619,11 @@ public:
         uint32_t id);
 
     /**
-     * Get the s-item definition corresponding to an ID
-     * @param id S-item ID to retrieve
-     * @return Pointer to the matching s-item definition, null if it does
-     *  not exist
+     * Get the s-item tokusei IDs corresponding to an item ID
+     * @param id Item ID to retrieve
+     * @return Set of tokusei mapped to the supplied item ID
      */
-    const std::shared_ptr<objects::MiSItemData> GetSItemData(uint32_t id);
+    std::set<int32_t> GetSItemTokusei(uint32_t id);
 
     /**
      * Get the skill definition corresponding to an ID
@@ -587,6 +681,13 @@ public:
         std::shared_ptr<objects::MiSynthesisData>> GetAllSynthesisData();
 
     /**
+     * Get the map of all material tank item definitions by ID
+     * @return Map of pointers to material tank item definitions by ID
+     */
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiTankData>> GetTankData();
+
+    /**
      * Get the time limit definition corresponding to an ID
      * @param id Time limit ID to retrieve
      * @return Pointer to the matching time limit definition, null if it does
@@ -620,6 +721,15 @@ public:
         GetTriUnionSpecialData(uint32_t sourceDemonTypeID);
 
     /**
+     * Get the (Diaspora) ura field tower corresponding to an ID
+     * @param id Ura field tower ID to retrieve
+     * @return Pointer to the matching ura field tower information, null
+     *  if it does not exist
+     */
+    const std::shared_ptr<objects::MiUraFieldTowerData> GetUraFieldTowerData(
+        uint32_t dungeonID, uint32_t id);
+
+    /**
      * Get the warp point corresponding to an ID
      * @param id Warp point ID to retrieve
      * @return Pointer to the matching warp point information, null
@@ -635,15 +745,6 @@ public:
      *  not exist
      */
     const std::shared_ptr<objects::MiZoneData> GetZoneData(uint32_t id);
-
-    /**
-     * Get the zone relation information corresponding to an ID
-     * @param id Zone relation information ID to retrieve
-     * @return Pointer to the matching zone relation information, null if
-     *  it does not exist
-     */
-    const std::shared_ptr<objects::MiCZoneRelationData> GetZoneRelationData(
-        uint32_t id);
 
     /**
      * Get an enchant set by definition ID
@@ -883,6 +984,10 @@ private:
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiBlendExtData>> mBlendExtData;
 
+    /// Map of client-side hourai NPC definitions by ID
+    std::unordered_map<int8_t,
+        std::shared_ptr<objects::MiCHouraiData>> mCHouraiData;
+
     /// Map of culture item definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiCultureItemData>> mCultureItemData;
@@ -984,6 +1089,22 @@ private:
     std::unordered_map<uint8_t,
         std::list<std::pair<uint8_t, uint32_t>>> mFusionRanges;
 
+    /// Map of digitalize "guardian assist" information by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiGuardianAssistData>> mGuardianAssistData;
+
+    /// Map of digitalize "guardian level" information by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiGuardianLevelData>> mGuardianLevelData;
+
+    /// Map of digitalize "guardian special" information by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiGuardianSpecialData>> mGuardianSpecialData;
+
+    /// Map of digitalize "guardian unlock" information by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiGuardianUnlockData>> mGuardianUnlockData;
+
     /// Map of human NPC definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiHNPCData>> mHNPCData;
@@ -991,6 +1112,22 @@ private:
     /// Map of item definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiItemData>> mItemData;
+
+    /// Map of mission definitions by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiMissionData>> mMissionData;
+
+    /// Map of mitama reunion bonus definitions by ID
+    std::unordered_map<uint32_t, std::shared_ptr<
+        objects::MiMitamaReunionBonusData>> mMitamaReunionBonusData;
+
+    /// Map of mitama reunion set bonus definitions by ID
+    std::unordered_map<uint32_t, std::shared_ptr<
+        objects::MiMitamaReunionSetBonusData>> mMitamaReunionSetBonusData;
+
+    /// Map of mitama union bonus definitions by ID
+    std::unordered_map<uint32_t, std::shared_ptr<
+        objects::MiMitamaUnionBonusData>> mMitamaUnionBonusData;
 
     /// Map of item modification definitions by ID
     std::unordered_map<uint32_t,
@@ -1040,9 +1177,8 @@ private:
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiShopProductData>> mShopProductData;
 
-    /// Map of s-item definitions by ID
-    std::unordered_map<uint32_t,
-        std::shared_ptr<objects::MiSItemData>> mSItemData;
+    /// Map of s-item tokusei IDs by item ID
+    std::unordered_map<uint32_t, std::set<int32_t>> mSItemTokusei;
 
     /// Map of skill definitions by ID
     std::unordered_map<uint32_t,
@@ -1067,6 +1203,10 @@ private:
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiSynthesisData>> mSynthesisData;
 
+    /// Map of material tank definitions by ID
+    std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiTankData>> mTankData;
+
     /// Map of time limit definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiTimeLimitData>> mTimeLimitData;
@@ -1086,6 +1226,10 @@ private:
     std::unordered_map<uint32_t,
         std::list<uint32_t>> mTriUnionSpecialDataBySourceID;
 
+    /// Map of (Diaspora) ura field tower definitions by dungeon ID, then ID
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t,
+        std::shared_ptr<objects::MiUraFieldTowerData>>> mUraFieldTowerData;
+
     /// Map of warp point definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiWarpPointData>> mWarpPointData;
@@ -1093,10 +1237,6 @@ private:
     /// Map of zone definitions by ID
     std::unordered_map<uint32_t,
         std::shared_ptr<objects::MiZoneData>> mZoneData;
-
-    /// Map of zone relational information by ID
-    std::unordered_map<uint32_t,
-        std::shared_ptr<objects::MiCZoneRelationData>> mZoneRelationData;
 
     /// Map of enchant set definitions by ID
     std::unordered_map<uint32_t,

@@ -61,6 +61,24 @@ namespace channel
 class ChannelServer;
 
 /**
+ * Struct containing optional parameters supplied to EventManager::HandleEvent
+ * to simplify the function signature.
+ */
+struct EventOptions
+{
+    // Action group ID, set when performing a "start event" action so any later
+    // sets can pick up where the others left off
+    uint32_t ActionGroupID = 0;
+
+    // Force an auto-only context, regardless of its the client is specified
+    bool AutoOnly = false;
+
+    // Disallow interruption of any events in the set. Events that are queued
+    // but not started can still be interrupted if another is active.
+    bool NoInterrupt = false;
+};
+
+/**
  * Manager class in charge of processing event sequences as well as quest
  * phase progression and condition evaluation. Events include things like
  * NPC dialogue, player choice prompts, cinematics and context sensitive
@@ -89,17 +107,13 @@ public:
      * @param sourceEntityID Optional source of an event to focus on
      * @param zone Pointer to the zone where the event is executing. If
      *  the client is specified this will be overridden
-     * @param actionGroupID Optional action group ID, set when performing
-     *  a "start event" action so any later sets can pick up where the
-     *  others left off
-     * @param autoOnly Optional parameter to force an auto-only context,
-     *  regardless of its the client is specified
+     * @param options Optional parameters to modify event execution
      * @return true on success, false on failure
      */
     bool HandleEvent(const std::shared_ptr<ChannelClientConnection>& client,
         const libcomp::String& eventID, int32_t sourceEntityID,
-        const std::shared_ptr<Zone>& zone = nullptr, uint32_t actionGroupID = 0,
-        bool autoOnly = false);
+        const std::shared_ptr<Zone>& zone = nullptr,
+        EventOptions options = {});
 
     /**
      * Prepare a new event based upon the supplied ID, relative to an
@@ -110,6 +124,25 @@ public:
      */
     std::shared_ptr<objects::EventInstance> PrepareEvent(
         const libcomp::String& eventID, int32_t sourceEntityID);
+
+    /**
+     * Start a placeholder "system" event that does not end until explicitly
+     * requested. Useful for certain actions that lock the player in place until
+     * they automatically complete.
+     * @param client Pointer to the client the event affects
+     * @param sourceEntityID Optional source of an event to focus on
+     * @return true if the event was started, false if it could not
+     */
+    bool StartSystemEvent(const std::shared_ptr<ChannelClientConnection>& client,
+        int32_t sourceEntityID);
+
+    /**
+     * Stop the client's current event and return the source entity ID if
+     * one existed
+     * @param client Pointer to the client
+     * @return Source entity ID of the interrupted event
+     */
+    int32_t InterruptEvent(const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
      * Request an open menu event be started for the supplied client
@@ -128,14 +161,34 @@ public:
     /**
      * React to a response based on the current event of a client
      * @param client Pointer to the client sending the response
-     * @param responseID Value representing the player's response
-     *  contextual to the current event type
+     * @param responseID Value representing the player's response contextual
+     *  to the current event type (or -1 for a menu "next" enable flag)
      * @param objectID Optional object ID selected as part of the client
      *  response
      * @return true on success, false on failure
      */
     bool HandleResponse(const std::shared_ptr<ChannelClientConnection>& client,
         int32_t responseID, int64_t objectID = -1);
+
+    /**
+     * Set the supplied client's ChannelLogin active event and event index
+     * so the event chain can be continued when they arrive at the other
+     * channel server
+     * @param client Pointer to the client connection
+     * @return true on success, false on failure
+     */
+    bool SetChannelLoginEvent(
+        const std::shared_ptr<ChannelClientConnection>& client);
+
+    /**
+     * Continue an event that was in progress when the supplied client changed
+     * from another channel to the current one.
+     * @param client Pointer to the client connection
+     * @return true if an event was started, false if no event needed to
+     *  be performed
+     */
+    bool ContinueChannelChangeEvent(
+        const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
      * Start, update or complete a quest based upon the quest ID and phase
@@ -265,6 +318,16 @@ public:
     void EndWebGame(const std::shared_ptr<ChannelClientConnection>& client,
         bool notifyWorld);
 
+    /**
+     * Evaluate a list of event conditions for a client
+     * @param client Pointer to the client connection
+     * @param conditions Event conditions to evaluate
+     * @return true if the event conditions evaluate to true, otherwise false
+     */
+    bool EvaluateEventConditions(
+        const std::shared_ptr<ChannelClientConnection>& client,
+        const std::list<std::shared_ptr<objects::EventCondition>>& conditions);
+
 private:
     struct EventContext
     {
@@ -281,6 +344,13 @@ private:
      * @return true on success, false on failure
      */
     bool HandleEvent(EventContext& ctx);
+
+    /**
+     * Set the overhead status icon of the client entity to indicate they are
+     * involved in an event
+     * @param client Pointer to the client connection
+     */
+    void SetEventStatus(const std::shared_ptr<ChannelClientConnection>& client);
 
     /**
      * Evaluate each of the valid condition sets required to start a quest
@@ -303,7 +373,7 @@ private:
     /**
      * Evaluate a list of event conditions
      * @param ctx Execution context of the event
-     * @param condition Event condition to evaluate
+     * @param conditions Event conditions to evaluate
      * @return true if the event conditions evaluate to true, otherwise false
      */
     bool EvaluateEventConditions(EventContext& ctx,
@@ -312,10 +382,13 @@ private:
     /**
      * Evaluate a standard event condition
      * @param ctx Execution context of the event
+     * @param eState Pointer to the evaluating entity state for the context.
+     *  Can be null
      * @param condition Standard condition to evaluate
      * @return true if standard condition evaluates to true, otherwise false
      */
     bool EvaluateCondition(EventContext& ctx,
+        const std::shared_ptr<ActiveEntityState>& eState,
         const std::shared_ptr<objects::EventConditionData>& condition,
         EventCompareMode compareMode = EventCompareMode::DEFAULT_COMPARE);
 

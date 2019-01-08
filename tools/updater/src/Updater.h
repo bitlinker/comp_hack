@@ -54,6 +54,8 @@ public:
     Updater(QWidget *parent = 0);
     ~Updater();
 
+    void ReloadURL();
+
 protected slots:
     void unlock();
     void startGame();

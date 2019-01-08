@@ -32,26 +32,43 @@
 #include "ScriptEngine.h"
 
 // object Includes
+#include <Action.h>
+#include <ActionDelay.h>
+#include <ActionSpawn.h>
+#include <ActionZoneChange.h>
+#include <ActionZoneInstance.h>
+#include <AILogicGroup.h>
 #include <DemonPresent.h>
 #include <DemonQuestReward.h>
 #include <DropSet.h>
 #include <EnchantSetData.h>
 #include <EnchantSpecialData.h>
 #include <Event.h>
+#include <EventPerformActions.h>
+#include <MiSItemData.h>
 #include <MiSStatusData.h>
 #include <MiZoneBasicData.h>
 #include <MiZoneData.h>
+#include <PlasmaSpawn.h>
+#include <PvPInstanceVariant.h>
 #include <ServerNPC.h>
 #include <ServerObject.h>
 #include <ServerShop.h>
+#include <ServerShopProduct.h>
+#include <ServerShopTab.h>
 #include <ServerZone.h>
 #include <ServerZoneInstance.h>
 #include <ServerZoneInstanceVariant.h>
 #include <ServerZonePartial.h>
+#include <ServerZoneSpot.h>
+#include <ServerZoneTrigger.h>
 #include <Spawn.h>
 #include <SpawnGroup.h>
 #include <SpawnLocationGroup.h>
 #include <Tokusei.h>
+
+// Standard C Includes
+#include <cmath>
 
 using namespace libcomp;
 
@@ -248,11 +265,63 @@ const std::set<uint32_t> ServerDataManager::GetAllZoneInstanceIDs()
     return instanceIDs;
 }
 
+bool ServerDataManager::ExistsInInstance(uint32_t instanceID, uint32_t zoneID,
+    uint32_t dynamicMapID)
+{
+    auto instDef = GetZoneInstanceData(instanceID);
+    if(instDef)
+    {
+        for(size_t i = 0; i < instDef->ZoneIDsCount(); i++)
+        {
+            if(instDef->GetZoneIDs(i) == zoneID &&
+               (!dynamicMapID || instDef->GetDynamicMapIDs(i) == dynamicMapID))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 const std::shared_ptr<objects::ServerZoneInstanceVariant>
     ServerDataManager::GetZoneInstanceVariantData(uint32_t id)
 {
     return GetObjectByID<uint32_t, objects::ServerZoneInstanceVariant>(id,
         mZoneInstanceVariantData);
+}
+
+std::set<uint32_t> ServerDataManager::GetStandardPvPVariantIDs(
+    uint8_t type) const
+{
+    auto it = mStandardPvPVariantIDs.find(type);
+    return it != mStandardPvPVariantIDs.end()
+        ? it->second : std::set<uint32_t>();
+}
+
+bool ServerDataManager::VerifyPvPInstance(uint32_t instanceID,
+    DefinitionManager* definitionManager)
+{
+    auto instanceDef = GetZoneInstanceData(instanceID);
+    if(instanceDef && definitionManager)
+    {
+        for(uint32_t zoneID : instanceDef->GetZoneIDs())
+        {
+            auto zoneDef = definitionManager->GetZoneData(zoneID);
+            if(!zoneDef || zoneDef->GetBasic()->GetType() != 7)
+            {
+                LOG_ERROR(libcomp::String("Instance contains non-PvP zones"
+                    " and cannot be used for PvP: %1\n").Arg(instanceID));
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    LOG_ERROR(libcomp::String("Failed to verify PvP instance: %1\n")
+        .Arg(instanceID));
+    return false;
 }
 
 const std::shared_ptr<objects::ServerZonePartial>
@@ -274,6 +343,11 @@ const std::shared_ptr<objects::ServerShop> ServerDataManager::GetShopData(uint32
 std::list<uint32_t> ServerDataManager::GetCompShopIDs() const
 {
     return mCompShopIDs;
+}
+
+const std::shared_ptr<objects::AILogicGroup> ServerDataManager::GetAILogicGroup(uint16_t id)
+{
+    return GetObjectByID<uint16_t, objects::AILogicGroup>(id, mAILogicGroups);
 }
 
 const std::shared_ptr<objects::DemonPresent> ServerDataManager::GetDemonPresentData(uint32_t id)
@@ -316,53 +390,77 @@ bool ServerDataManager::LoadData(DataStore *pDataStore,
 
     if(definitionManager)
     {
+        // Load definition dependent server definitions from path or file
+        if(!failure)
+        {
+            LOG_DEBUG("Loading AI logic group server definitions...\n");
+            failure = !LoadObjects<objects::AILogicGroup>(
+                pDataStore, "/data/ailogicgroup", definitionManager, false,
+                true);
+        }
+
         if(!failure)
         {
             LOG_DEBUG("Loading demon present server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::DemonPresent>(
-                pDataStore, "/data/demonpresent.xml", definitionManager);
+            failure = !LoadObjects<objects::DemonPresent>(
+                pDataStore, "/data/demonpresent", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading demon quest reward server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::DemonQuestReward>(
-                pDataStore, "/data/demonquestreward.xml", definitionManager);
+            failure = !LoadObjects<objects::DemonQuestReward>(
+                pDataStore, "/data/demonquestreward", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading drop set server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::DropSet>(
-                pDataStore, "/data/dropset.xml", definitionManager);
+            failure = !LoadObjects<objects::DropSet>(
+                pDataStore, "/data/dropset", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading enchant set server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::EnchantSetData>(
-                pDataStore, "/data/enchantset.xml", definitionManager);
+            failure = !LoadObjects<objects::EnchantSetData>(
+                pDataStore, "/data/enchantset", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading enchant special server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::EnchantSpecialData>(
-                pDataStore, "/data/enchantspecial.xml", definitionManager);
+            failure = !LoadObjects<objects::EnchantSpecialData>(
+                pDataStore, "/data/enchantspecial", definitionManager, false,
+                true);
+        }
+
+        if(!failure)
+        {
+            LOG_DEBUG("Loading s-item server definitions...\n");
+            failure = !LoadObjects<objects::MiSItemData>(
+                pDataStore, "/data/sitemextended", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading s-status server definitions...\n");
-            failure = !LoadObjectsFromFile<objects::MiSStatusData>(
-                pDataStore, "/data/sstatus.xml", definitionManager);
+            failure = !LoadObjects<objects::MiSStatusData>(
+                pDataStore, "/data/sstatus", definitionManager, false,
+                true);
         }
 
         if(!failure)
         {
             LOG_DEBUG("Loading tokusei server definitions...\n");
-            failure = !LoadObjects<objects::Tokusei>(pDataStore,
-                "/tokusei", definitionManager, true);
+            failure = !LoadObjects<objects::Tokusei>(
+                pDataStore, "/data/tokusei", definitionManager, false,
+                true);
         }
     }
 
@@ -370,48 +468,51 @@ bool ServerDataManager::LoadData(DataStore *pDataStore,
     {
         LOG_DEBUG("Loading zone server definitions...\n");
         failure = !LoadObjects<objects::ServerZone>(pDataStore, "/zones",
-            definitionManager, false);
+            definitionManager, false, false);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading zone partial server definitions...\n");
         failure = !LoadObjects<objects::ServerZonePartial>(pDataStore,
-            "/zones/partial", definitionManager, true);
+            "/zones/partial", definitionManager, true, false);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading event server definitions...\n");
         failure = !LoadObjects<objects::Event>(pDataStore, "/events",
-            definitionManager, true);
+            definitionManager, true, false);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading zone instance server definitions...\n");
-        failure = !LoadObjectsFromFile<objects::ServerZoneInstance>(
-            pDataStore, "/data/zoneinstance.xml", definitionManager);
+        failure = !LoadObjects<objects::ServerZoneInstance>(
+            pDataStore, "/data/zoneinstance", definitionManager, false,
+            true);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading zone instance variant server definitions...\n");
-        failure = !LoadObjectsFromFile<objects::ServerZoneInstanceVariant>(
-            pDataStore, "/data/zoneinstancevariant.xml", definitionManager);
+        failure = !LoadObjects<objects::ServerZoneInstanceVariant>(
+            pDataStore, "/data/zoneinstancevariant", definitionManager,
+            false, true);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading shop server definitions...\n");
         failure = !LoadObjects<objects::ServerShop>(pDataStore, "/shops",
-            definitionManager, true);
+            definitionManager, true, false);
     }
 
     if(!failure)
     {
         LOG_DEBUG("Loading server scripts...\n");
-        failure = !LoadScripts(pDataStore, "/scripts", &ServerDataManager::LoadScript);
+        failure = !LoadScripts(pDataStore, "/scripts",
+            &ServerDataManager::LoadScript);
     }
 
     return !failure;
@@ -420,7 +521,7 @@ bool ServerDataManager::LoadData(DataStore *pDataStore,
 bool ServerDataManager::ApplyZonePartial(std::shared_ptr<objects::ServerZone> zone,
     uint32_t partialID)
 {
-    if(!zone)
+    if(!zone || !partialID)
     {
         return false;
     }
@@ -445,21 +546,52 @@ bool ServerDataManager::ApplyZonePartial(std::shared_ptr<objects::ServerZone> zo
         return false;
     }
 
+    ApplyZonePartial(zone, partial, true);
+
+    return true;
+}
+
+void ServerDataManager::ApplyZonePartial(
+    std::shared_ptr<objects::ServerZone> zone,
+    const std::shared_ptr<objects::ServerZonePartial>& partial,
+    bool positionReplace)
+{
+    // Add dropsets
+    for(uint32_t dropSetID : partial->GetDropSetIDs())
+    {
+        zone->InsertDropSetIDs(dropSetID);
+    }
+
+    // Add whitelist skills
+    for(uint32_t skillID : partial->GetSkillWhitelist())
+    {
+        zone->InsertSkillWhitelist(skillID);
+    }
+
+    // Add blacklist skills
+    for(uint32_t skillID : partial->GetSkillBlacklist())
+    {
+        zone->InsertSkillBlacklist(skillID);
+    }
+
     // Build new NPC set
     auto npcs = zone->GetNPCs();
     for(auto& npc : partial->GetNPCs())
     {
-        // Remove any NPCs that share the same spot ID or are within
-        // 10 units from the new one (X or Y)
-        npcs.remove_if([npc](
-            const std::shared_ptr<objects::ServerNPC>& oNPC)
-            {
-                return (npc->GetSpotID() &&
-                    oNPC->GetSpotID() == npc->GetSpotID()) ||
-                    (!npc->GetSpotID() && !oNPC->GetSpotID() &&
-                        fabs(oNPC->GetX() - npc->GetX()) < 10.f &&
-                        fabs(oNPC->GetY() - npc->GetY()) < 10.f);
-            });
+        if(positionReplace)
+        {
+            // Remove any NPCs that share the same spot ID or are within
+            // 10 units from the new one (X or Y)
+            npcs.remove_if([npc](
+                const std::shared_ptr<objects::ServerNPC>& oNPC)
+                {
+                    return (npc->GetSpotID() &&
+                        oNPC->GetSpotID() == npc->GetSpotID()) ||
+                        (!npc->GetSpotID() && !oNPC->GetSpotID() &&
+                            fabs(oNPC->GetX() - npc->GetX()) < 10.f &&
+                            fabs(oNPC->GetY() - npc->GetY()) < 10.f);
+                });
+        }
 
         // Removes supported via 0 ID
         if(npc->GetID())
@@ -473,17 +605,20 @@ bool ServerDataManager::ApplyZonePartial(std::shared_ptr<objects::ServerZone> zo
     auto objects = zone->GetObjects();
     for(auto& obj : partial->GetObjects())
     {
-        // Remove any objects that share the same spot ID or are within
-        // 10 units from the new one (X and Y)
-        objects.remove_if([obj](
-            const std::shared_ptr<objects::ServerObject>& oObj)
-            {
-                return (obj->GetSpotID() &&
-                    oObj->GetSpotID() == obj->GetSpotID()) ||
-                    (!obj->GetSpotID() && !oObj->GetSpotID() &&
-                        fabs(oObj->GetX() - obj->GetX()) < 10.f &&
-                        fabs(oObj->GetY() - obj->GetY()) < 10.f);
-            });
+        if(positionReplace)
+        {
+            // Remove any objects that share the same spot ID or are within
+            // 10 units from the new one (X and Y)
+            objects.remove_if([obj](
+                const std::shared_ptr<objects::ServerObject>& oObj)
+                {
+                    return (obj->GetSpotID() &&
+                        oObj->GetSpotID() == obj->GetSpotID()) ||
+                        (!obj->GetSpotID() && !oObj->GetSpotID() &&
+                            fabs(oObj->GetX() - obj->GetX()) < 10.f &&
+                            fabs(oObj->GetY() - obj->GetY()) < 10.f);
+                });
+        }
 
         // Removes supported via 0 ID
         if(obj->GetID())
@@ -522,8 +657,6 @@ bool ServerDataManager::ApplyZonePartial(std::shared_ptr<objects::ServerZone> zo
     {
         zone->AppendTriggers(trigger);
     }
-
-    return true;
 }
 
 bool ServerDataManager::LoadScripts(gsl::not_null<DataStore*> pDataStore,
@@ -625,12 +758,23 @@ namespace libcomp
                         .Arg(sPair.second->GetEnemyType()));
                     return false;
                 }
+                else if(sPair.second->GetBossGroup() &&
+                    sPair.second->GetCategory() !=
+                    objects::Spawn::Category_t::BOSS)
+                {
+                    LOG_ERROR(libcomp::String("Invalid spawn boss group"
+                        " encountered in zone %1: %2\n").Arg(zoneStr)
+                        .Arg(sPair.first));
+                    return false;
+                }
             }
         }
 
         for(auto sgPair : zone->GetSpawnGroups())
         {
-            for(auto sPair : sgPair.second->GetSpawns())
+            auto sg = sgPair.second;
+
+            for(auto sPair : sg->GetSpawns())
             {
                 if(!zone->SpawnsKeyExists(sPair.first))
                 {
@@ -639,6 +783,14 @@ namespace libcomp
                         .Arg(sPair.first));
                     return false;
                 }
+            }
+
+            if(!ValidateActions(sg->GetDefeatActions(), libcomp::String(
+               "Zone %1, SG %2 Defeat").Arg(zoneStr).Arg(sg->GetID()), false) ||
+               !ValidateActions(sg->GetSpawnActions(), libcomp::String(
+               "Zone %1, SG %2 Spawn").Arg(zoneStr).Arg(sg->GetID()), false))
+            {
+                return false;
             }
         }
 
@@ -664,6 +816,57 @@ namespace libcomp
                 dynamicMapID));
         }
 
+        for(auto npc : zone->GetNPCs())
+        {
+            if(!ValidateActions(npc->GetActions(), libcomp::String(
+                "Zone %1, NPC %2").Arg(zoneStr).Arg(npc->GetID()), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto obj : zone->GetObjects())
+        {
+            if(!ValidateActions(obj->GetActions(), libcomp::String(
+                "Zone %1, Object %2").Arg(zoneStr).Arg(obj->GetID()), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto& pPair : zone->GetPlasmaSpawns())
+        {
+            auto plasma = pPair.second;
+            if(!ValidateActions(plasma->GetSuccessActions(), libcomp::String(
+                "Zone %1, Plasma %2").Arg(zoneStr).Arg(pPair.first), false) ||
+               !ValidateActions(plasma->GetFailActions(), libcomp::String(
+                "Zone %1, Plasma %2").Arg(zoneStr).Arg(pPair.first), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto& spotPair : zone->GetSpots())
+        {
+            auto spot = spotPair.second;
+            if(!ValidateActions(spot->GetActions(), libcomp::String(
+                "Zone %1, Spot %2").Arg(zoneStr).Arg(spotPair.first), false) ||
+               !ValidateActions(spot->GetLeaveActions(), libcomp::String(
+                "Zone %1, Spot %2").Arg(zoneStr).Arg(spotPair.first), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto t : zone->GetTriggers())
+        {
+            if(!ValidateActions(t->GetActions(), libcomp::String(
+                "Zone %1 trigger").Arg(zoneStr), TriggerIsAutoContext(t)))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -686,29 +889,103 @@ namespace libcomp
             return false;
         }
 
-        // Make sure spawns are valid
-        if(definitionManager)
+        if(id == 0)
         {
-            for(auto sPair : prt->GetSpawns())
+            // Warn about any unsupported parts (spawns are used for global
+            // spawn skills)
+            if(prt->DynamicMapIDsCount() || prt->NPCsCount() ||
+                prt->ObjectsCount() || prt->SpotsCount())
             {
-                if(definitionManager->GetDevilData(
-                    sPair.second->GetEnemyType()) == nullptr)
+                LOG_WARNING("Direct global partial zone definitions specified"
+                    " but will be ignored\n");
+            }
+        }
+        else
+        {
+            // Make sure spawns are valid
+            if(definitionManager)
+            {
+                for(auto sPair : prt->GetSpawns())
                 {
-                    LOG_ERROR(libcomp::String("Invalid spawn enemy type"
-                        " encountered in zone partial %1: %2\n").Arg(id)
-                        .Arg(sPair.second->GetEnemyType()));
-                    return false;
+                    if(definitionManager->GetDevilData(
+                        sPair.second->GetEnemyType()) == nullptr)
+                    {
+                        LOG_ERROR(libcomp::String("Invalid spawn enemy type"
+                            " encountered in zone partial %1: %2\n").Arg(id)
+                            .Arg(sPair.second->GetEnemyType()));
+                        return false;
+                    }
+                    else if(sPair.second->GetBossGroup() &&
+                        sPair.second->GetCategory() !=
+                        objects::Spawn::Category_t::BOSS)
+                    {
+                        LOG_ERROR(libcomp::String("Invalid spawn boss group"
+                            " encountered in zone paritial %1: %2\n").Arg(id)
+                            .Arg(sPair.first));
+                        return false;
+                    }
+                }
+            }
+
+            if(prt->GetAutoApply())
+            {
+                for(uint32_t dynamicMapID : prt->GetDynamicMapIDs())
+                {
+                    mZonePartialMap[dynamicMapID].insert(id);
                 }
             }
         }
 
         mZonePartialData[id] = prt;
 
-        if(prt->GetAutoApply())
+        for(auto sgPair : prt->GetSpawnGroups())
         {
-            for(uint32_t dynamicMapID : prt->GetDynamicMapIDs())
+            auto sg = sgPair.second;
+            if(!ValidateActions(sg->GetDefeatActions(), libcomp::String(
+               "Partial %1, SG %2 Defeat").Arg(id).Arg(sg->GetID()), false) ||
+               !ValidateActions(sg->GetSpawnActions(), libcomp::String(
+               "Partial %1, SG %2 Spawn").Arg(id).Arg(sg->GetID()), false))
             {
-                mZonePartialMap[dynamicMapID].insert(id);
+                return false;
+            }
+        }
+
+        for(auto npc : prt->GetNPCs())
+        {
+            if(!ValidateActions(npc->GetActions(), libcomp::String(
+                "Partial %1, NPC %2").Arg(id).Arg(npc->GetID()), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto obj : prt->GetObjects())
+        {
+            if(!ValidateActions(obj->GetActions(), libcomp::String(
+                "Partial %1, Object %2").Arg(id).Arg(obj->GetID()), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto& spotPair : prt->GetSpots())
+        {
+            auto spot = spotPair.second;
+            if(!ValidateActions(spot->GetActions(), libcomp::String(
+                "Partial %1, Spot %2").Arg(id).Arg(spotPair.first), false) ||
+               !ValidateActions(spot->GetLeaveActions(), libcomp::String(
+                "Partial %1, Spot %2").Arg(id).Arg(spotPair.first), false))
+            {
+                return false;
+            }
+        }
+
+        for(auto t : prt->GetTriggers())
+        {
+            if(!ValidateActions(t->GetActions(), libcomp::String(
+                "Partial %1 trigger").Arg(id), TriggerIsAutoContext(t)))
+            {
+                return false;
             }
         }
 
@@ -741,6 +1018,18 @@ namespace libcomp
         }
 
         mEventData[id] = event;
+
+        if(event->GetEventType() == objects::Event::EventType_t::PERFORM_ACTIONS)
+        {
+            auto e = std::dynamic_pointer_cast<objects::EventPerformActions>(event);
+            if(e)
+            {
+                if(!ValidateActions(e->GetActions(), e->GetID(), false, true))
+                {
+                    return false;
+                }
+            }
+        }
 
         return true;
     }
@@ -804,8 +1093,8 @@ namespace libcomp
     {
         (void)definitionManager;
 
-        auto variant = std::shared_ptr<objects::ServerZoneInstanceVariant>(
-            new objects::ServerZoneInstanceVariant);
+        auto variant = objects::ServerZoneInstanceVariant::InheritedConstruction(
+            objNode->Attribute("name"));
         if(!variant->Load(doc, *objNode))
         {
             return false;
@@ -831,6 +1120,15 @@ namespace libcomp
                 return false;
             }
             break;
+        case objects::ServerZoneInstanceVariant::InstanceType_t::PVP:
+            if(timeCount != 2 && timeCount != 3)
+            {
+                LOG_ERROR(libcomp::String("PVP zone instance variant"
+                    " encountered without 2 or 3 time points specified: %1\n")
+                    .Arg(id));
+                return false;
+            }
+            break;
         case objects::ServerZoneInstanceVariant::InstanceType_t::DEMON_ONLY:
             if(timeCount != 3 && timeCount != 4)
             {
@@ -840,8 +1138,54 @@ namespace libcomp
                 return false;
             }
             break;
+        case objects::ServerZoneInstanceVariant::InstanceType_t::DIASPORA:
+            if(timeCount != 2)
+            {
+                LOG_ERROR(libcomp::String("Diaspora zone instance variant"
+                    " encountered without 2 time points specified: %1\n")
+                    .Arg(id));
+                return false;
+            }
+            break;
+        case objects::ServerZoneInstanceVariant::InstanceType_t::MISSION:
+            if(timeCount != 1)
+            {
+                LOG_ERROR(libcomp::String("Mission zone instance variant"
+                    " encountered without time point specified: %1\n")
+                    .Arg(id));
+                return false;
+            }
+            break;
+        case objects::ServerZoneInstanceVariant::InstanceType_t::PENTALPHA:
+            if(variant->GetSubID() >= 5)
+            {
+                LOG_ERROR(libcomp::String("Pentalpha zone instance variant"
+                    " encountered with invalid sub ID: %1\n")
+                    .Arg(id));
+                return false;
+            }
+            break;
         default:
             break;
+        }
+
+        auto pvpVar = std::dynamic_pointer_cast<objects::PvPInstanceVariant>(
+            variant);
+        if(pvpVar)
+        {
+            if(definitionManager && pvpVar->GetDefaultInstanceID() &&
+                !VerifyPvPInstance(pvpVar->GetDefaultInstanceID(),
+                    definitionManager))
+            {
+                return false;
+            }
+
+            if(!pvpVar->GetSpecialMode() && pvpVar->GetMatchType() !=
+                objects::PvPInstanceVariant::MatchType_t::CUSTOM)
+            {
+                mStandardPvPVariantIDs[(uint8_t)pvpVar->GetMatchType()]
+                    .insert(id);
+            }
         }
 
         mZoneInstanceVariantData[id] = variant;
@@ -864,7 +1208,16 @@ namespace libcomp
         uint32_t id = (uint32_t)shop->GetShopID();
         if(mShopData.find(id) != mShopData.end())
         {
-            LOG_ERROR(libcomp::String("Duplicate shop encountered: %1\n").Arg(id));
+            LOG_ERROR(libcomp::String("Duplicate shop encountered: %1\n")
+                .Arg(id));
+            return false;
+        }
+
+        // Tab count cannot exceed max s8, apply lower arbitrary limit
+        if(shop->TabsCount() > 100)
+        {
+            LOG_ERROR(libcomp::String("Shop with more than 100 tabs"
+                " encountered: %1\n").Arg(id));
             return false;
         }
 
@@ -874,6 +1227,31 @@ namespace libcomp
         {
             mCompShopIDs.push_back(id);
         }
+
+        return true;
+    }
+
+    template<>
+    bool ServerDataManager::LoadObject<objects::AILogicGroup>(const tinyxml2::XMLDocument& doc,
+        const tinyxml2::XMLElement *objNode, DefinitionManager* definitionManager)
+    {
+        (void)definitionManager;
+
+        auto grp = std::shared_ptr<objects::AILogicGroup>(new objects::AILogicGroup);
+        if(!grp->Load(doc, *objNode))
+        {
+            return false;
+        }
+
+        uint16_t id = grp->GetID();
+        if(mAILogicGroups.find(id) != mAILogicGroups.end())
+        {
+            LOG_ERROR(libcomp::String("Duplicate AI logic group entry"
+                " encountered: %1\n").Arg(id));
+            return false;
+        }
+
+        mAILogicGroups[id] = grp;
 
         return true;
     }
@@ -987,6 +1365,19 @@ namespace libcomp
         }
 
         return definitionManager && definitionManager->RegisterServerSideDefinition(eSpecial);
+    }
+
+    template<>
+    bool ServerDataManager::LoadObject<objects::MiSItemData>(const tinyxml2::XMLDocument& doc,
+        const tinyxml2::XMLElement *objNode, DefinitionManager* definitionManager)
+    {
+        auto sItem = std::shared_ptr<objects::MiSItemData>(new objects::MiSItemData);
+        if(!sItem->Load(doc, *objNode))
+        {
+            return false;
+        }
+
+        return definitionManager && definitionManager->RegisterServerSideDefinition(sItem);
     }
 
     template<>
@@ -1108,6 +1499,16 @@ bool ServerDataManager::LoadScript(const libcomp::String& path,
                 return false;
             }
         }
+        else if(type == "actioncustom")
+        {
+            fDef = root.GetFunction("run");
+            if(fDef.IsNull())
+            {
+                LOG_ERROR(libcomp::String("Custom action script encountered"
+                    " with no 'run' function: %1\n").Arg(script->Name.C()));
+                return false;
+            }
+        }
         else
         {
             LOG_ERROR(libcomp::String("Invalid script type encountered: %1\n")
@@ -1119,6 +1520,149 @@ bool ServerDataManager::LoadScript(const libcomp::String& path,
     }
 
     return true;
+}
+
+bool ServerDataManager::ValidateActions(const std::list<std::shared_ptr<
+    objects::Action>>& actions, const libcomp::String& source,
+    bool autoContext, bool inEvent)
+{
+    size_t current = 0;
+    size_t count = actions.size();
+    for(auto action : actions)
+    {
+        current++;
+
+        if(current != count && !inEvent)
+        {
+            bool warn = false;
+            switch(action->GetActionType())
+            {
+            case objects::Action::ActionType_t::ZONE_CHANGE:
+                {
+                    auto act = std::dynamic_pointer_cast<
+                        objects::ActionZoneChange>(action);
+                    warn = act && act->GetZoneID() != 0;
+                }
+                break;
+            case objects::Action::ActionType_t::ZONE_INSTANCE:
+                {
+                    auto act = std::dynamic_pointer_cast<
+                        objects::ActionZoneInstance>(action);
+                    if(act)
+                    {
+                        switch(act->GetMode())
+                        {
+                        case objects::ActionZoneInstance::Mode_t::JOIN:
+                        case objects::ActionZoneInstance::Mode_t::CLAN_JOIN:
+                        case objects::ActionZoneInstance::Mode_t::TEAM_JOIN:
+                        case objects::ActionZoneInstance::Mode_t::TEAM_PVP:
+                            warn = true;
+                            break;
+                        default:
+                            break;
+                        }
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+
+            if(warn)
+            {
+                LOG_WARNING(libcomp::String("Zone change action encountered"
+                    " mid-action set in a context outside of an event. This"
+                    " can cause unexpected behavior for multi-channel setups."
+                    " Move to the end of the set to avoid errors: %1\n")
+                    .Arg(source));
+            }
+        }
+
+        bool autoCtx = autoContext && (action->GetSourceContext() ==
+            objects::Action::SourceContext_t::ENEMIES ||
+            action->GetSourceContext() ==
+            objects::Action::SourceContext_t::SOURCE);
+        switch(action->GetActionType())
+        {
+        case objects::Action::ActionType_t::DELAY:
+            {
+                auto act = std::dynamic_pointer_cast<objects::ActionDelay>(
+                    action);
+                if(!ValidateActions(act->GetActions(), libcomp::String(
+                    "%1 => Delay Actions").Arg(source), autoCtx))
+                {
+                    return false;
+                }
+            }
+            break;
+        case objects::Action::ActionType_t::SPAWN:
+            {
+                auto act = std::dynamic_pointer_cast<objects::ActionSpawn>(
+                    action);
+                if(!ValidateActions(act->GetDefeatActions(), libcomp::String(
+                    "%1 => Defeat Actions").Arg(source), autoCtx))
+                {
+                    return false;
+                }
+            }
+            break;
+        case objects::Action::ActionType_t::ADD_REMOVE_ITEMS:
+        case objects::Action::ActionType_t::DISPLAY_MESSAGE:
+        case objects::Action::ActionType_t::GRANT_SKILLS:
+        case objects::Action::ActionType_t::GRANT_XP:
+        case objects::Action::ActionType_t::PLAY_BGM:
+        case objects::Action::ActionType_t::PLAY_SOUND_EFFECT:
+        case objects::Action::ActionType_t::SET_HOMEPOINT:
+        case objects::Action::ActionType_t::SPECIAL_DIRECTION:
+        case objects::Action::ActionType_t::STAGE_EFFECT:
+        case objects::Action::ActionType_t::UPDATE_COMP:
+        case objects::Action::ActionType_t::UPDATE_FLAG:
+        case objects::Action::ActionType_t::UPDATE_LNC:
+        case objects::Action::ActionType_t::UPDATE_QUEST:
+        case objects::Action::ActionType_t::ZONE_CHANGE:
+        case objects::Action::ActionType_t::ZONE_INSTANCE:
+            if(autoCtx)
+            {
+                LOG_ERROR(libcomp::String("Non-player context with player"
+                    " required action type %1 encountered: %2\n")
+                    .Arg((int32_t)action->GetActionType()).Arg(source));
+                return false;
+            }
+            break;
+        case objects::Action::ActionType_t::ADD_REMOVE_STATUS:
+        case objects::Action::ActionType_t::CREATE_LOOT:
+        case objects::Action::ActionType_t::RUN_SCRIPT:
+        case objects::Action::ActionType_t::SET_NPC_STATE:
+        case objects::Action::ActionType_t::START_EVENT:
+        case objects::Action::ActionType_t::UPDATE_POINTS:
+        case objects::Action::ActionType_t::UPDATE_ZONE_FLAGS:
+        default:
+            // Nothing special needed
+            break;
+        }
+    }
+
+    return true;
+}
+
+bool ServerDataManager::TriggerIsAutoContext(
+    const std::shared_ptr<objects::ServerZoneTrigger>& trigger)
+{
+    // Most triggers use auto-only contexts
+    switch(trigger->GetTrigger())
+    {
+    case objects::ServerZoneTrigger::Trigger_t::ON_DEATH:
+    case objects::ServerZoneTrigger::Trigger_t::ON_DIASPORA_BASE_CAPTURE:
+    case objects::ServerZoneTrigger::Trigger_t::ON_FLAG_SET:
+    case objects::ServerZoneTrigger::Trigger_t::ON_PVP_BASE_CAPTURE:
+    case objects::ServerZoneTrigger::Trigger_t::ON_PVP_COMPLETE:
+    case objects::ServerZoneTrigger::Trigger_t::ON_REVIVAL:
+    case objects::ServerZoneTrigger::Trigger_t::ON_ZONE_IN:
+    case objects::ServerZoneTrigger::Trigger_t::ON_ZONE_OUT:
+        return false;
+    default:
+        return true;
+    }
 }
 
 namespace libcomp

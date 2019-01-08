@@ -34,6 +34,7 @@
 namespace objects
 {
 class Character;
+class CharacterState;
 class InheritedSkill;
 }
 
@@ -50,14 +51,6 @@ public:
      * Create a new demon state.
      */
     DemonState();
-
-    /**
-     * Explicitly defined copy constructor necessary due to removal
-     * of implicit constructor from non-copyable mutex member. This should
-     * never actually be used.
-     * @param other The other state to copy
-     */
-    DemonState(const DemonState& other);
 
     /**
      * Clean up the demon state.
@@ -83,6 +76,12 @@ public:
     std::list<int32_t> GetCompendiumTokuseiIDs() const;
 
     /**
+     * Get the set of tokusei effect IDs granted to the current demon
+     * @return List of tokusei effect IDs
+     */
+    std::list<int32_t> GetDemonTokuseiIDs() const;
+
+    /**
      * Update all character relative, demon independent information
      * that pertains to the current partner's state
      * @param character Pointer to the character that owns the demon state
@@ -92,6 +91,15 @@ public:
      */
     bool UpdateSharedState(const std::shared_ptr<objects::Character>& character,
         libcomp::DefinitionManager* definitionManager);
+
+    /**
+     * Update all state information that pertains to the current partner.
+     * Both demon state and character skills can affect this.
+     * @param definitionManager Pointer to the definition manager to use
+     *  when calculating demon data
+     * @return true if an update occurred, false if one did not
+     */
+    bool UpdateDemonState(libcomp::DefinitionManager* definitionManager);
 
     /**
      * Get list of skills currently being learned by affinity ID
@@ -120,11 +128,26 @@ public:
     int16_t UpdateLearningSkill(const std::shared_ptr<
         objects::InheritedSkill>& iSkill, uint16_t points);
 
+    virtual const libobjgen::UUID GetEntityUUID();
+
+    virtual uint8_t RecalculateStats(libcomp::DefinitionManager* definitionManager,
+        std::shared_ptr<objects::CalculatedEntityState> calcState = nullptr);
+
+    virtual std::set<uint32_t> GetAllSkills(
+        libcomp::DefinitionManager* definitionManager, bool includeTokusei);
+
+    virtual uint8_t GetLNCType();
+
+    virtual int8_t GetGender();
+
 private:
     /// Map of inherited skills not yet maxed by affinity ID. This
     /// map is refreshed by calling RefreshLearningSkills
     std::unordered_map<uint8_t, std::list<
         std::shared_ptr<objects::InheritedSkill>>> mLearningSkills;
+
+    /// Tokusei effect IDs available due to the demon's current state
+    std::list<int32_t> mDemonTokuseiIDs;
 
     /// Tokusei effect IDs available due to the character's demonic
     /// compendium completion level
@@ -141,6 +164,9 @@ private:
     /// Quick access count representing the number of entries in the
     /// demonic compendium by race
     std::unordered_map<uint8_t, uint16_t> mCompendiumRaceCounts;
+
+    /// Map of bonus stats gained from the character
+    libcomp::EnumMap<CorrectTbl, int16_t> mCharacterBonuses;
 
     /// Shared state property specific mutex lock
     std::mutex mSharedLock;

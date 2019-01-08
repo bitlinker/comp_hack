@@ -29,6 +29,7 @@
 // libcomp Includes
 #include <Packet.h>
 #include <PacketCodes.h>
+#include <ScriptEngine.h>
 
 // objects Includes
 #include <Loot.h>
@@ -39,6 +40,28 @@
 #include "ChannelServer.h"
 
 using namespace channel;
+
+namespace libcomp
+{
+    template<>
+    ScriptEngine& ScriptEngine::Using<PlasmaState>()
+    {
+        if(!BindingExists("PlasmaState", true))
+        {
+            Using<objects::EntityStateObject>();
+
+            Sqrat::DerivedClass<PlasmaState, objects::EntityStateObject,
+                Sqrat::NoConstructor<PlasmaState>> binding(mVM, "PlasmaState");
+            binding
+                .Func("IsActive", &PlasmaState::IsActive)
+                .Func("Toggle", &PlasmaState::Toggle);
+
+            Bind<PlasmaState>("PlasmaState", binding);
+        }
+
+        return *this;
+    }
+}
 
 PlasmaPoint::PlasmaPoint()
 {
@@ -83,6 +106,7 @@ std::shared_ptr<objects::LootBox> PlasmaPoint::GetLoot() const
 PlasmaState::PlasmaState(const std::shared_ptr<objects::PlasmaSpawn>& plasma)
     : EntityState<objects::PlasmaSpawn>(plasma)
 {
+    mDeactivated = mDisabled = false;
 }
 
 bool PlasmaState::CreatePoints()
@@ -129,6 +153,42 @@ std::list<std::shared_ptr<PlasmaPoint>> PlasmaState::GetActivePoints()
     return results;
 }
 
+bool PlasmaState::IsActive(bool visible)
+{
+    if(visible)
+    {
+        return GetActivePoints().size() > 0;
+    }
+    else
+    {
+        return !mDeactivated;
+    }
+}
+
+void PlasmaState::Toggle(bool enable, bool activation)
+{
+    std::lock_guard<std::mutex> lock(mLock);
+    if(activation)
+    {
+        if(mDeactivated == enable)
+        {
+            mDeactivated = !enable;
+            return;
+        }
+    }
+    else if(mDisabled == enable)
+    {
+        mDisabled = !enable;
+        if(!enable)
+        {
+            for(auto& pair : mPoints)
+            {
+                mPointHides[pair.second->GetID()] = 0;
+            }
+        }
+    }
+}
+
 bool PlasmaState::HasStateChangePoints(bool respawn, uint64_t now)
 {
     if(now == 0)
@@ -140,6 +200,12 @@ bool PlasmaState::HasStateChangePoints(bool respawn, uint64_t now)
 
     if(respawn)
     {
+        // Do not spawn if enabled but still deactivated
+        if(mDisabled || mDeactivated)
+        {
+            return false;
+        }
+
         for(auto pair : mPoints)
         {
             if(pair.second->mHidden)
@@ -254,16 +320,38 @@ std::shared_ptr<PlasmaPoint> PlasmaState::SetPickResult(uint32_t pointID,
 {
     std::lock_guard<std::mutex> lock(mLock);
 
-    auto it = mPoints.find(pointID);
-    if(it == mPoints.end())
+    std::shared_ptr<PlasmaPoint> point;
+    if(pointID)
     {
-        return nullptr;
-    }
+        // Get specific point
+        auto it = mPoints.find(pointID);
+        if(it == mPoints.end())
+        {
+            return nullptr;
+        }
 
-    auto point = it->second;
-    if(point->mLooterID != looterID)
+        point = it->second;
+        if(looterID > 0 && point->mLooterID != looterID)
+        {
+            return nullptr;
+        }
+    }
+    else
     {
-        return nullptr;
+        // Get current point
+        for(auto& pair : mPoints)
+        {
+            if(pair.second->mLooterID == looterID)
+            {
+                point = pair.second;
+                break;
+            }
+        }
+
+        if(!point)
+        {
+            return nullptr;
+        }
     }
 
     // The result is a relative distance from the center of the "minigame"
@@ -275,7 +363,7 @@ std::shared_ptr<PlasmaPoint> PlasmaState::SetPickResult(uint32_t pointID,
         point->mHideTime = (uint64_t)(ChannelServer::GetServerTime() +
             120000000);
 
-        mPointHides[pointID] = point->mHideTime;
+        mPointHides[point->GetID()] = point->mHideTime;
     }
     else
     {
@@ -369,7 +457,14 @@ void PlasmaState::HidePoint(const std::shared_ptr<PlasmaPoint>& point)
     point->mHidden = true;
     mPointHides.erase(point->GetID());
 
-    uint64_t respawnTime = (uint64_t)(ChannelServer::GetServerTime() +
-        (uint64_t)(GetEntity()->GetRespawnTime() * 1000000.f));
-    mPointRespawns[point->GetID()] = respawnTime;
+    if(!mDisabled)
+    {
+        uint64_t respawnTime = (uint64_t)(ChannelServer::GetServerTime() +
+            (uint64_t)(GetEntity()->GetRespawnTime() * 1000000.f));
+        mPointRespawns[point->GetID()] = respawnTime;
+    }
+    else
+    {
+        mPointRespawns[point->GetID()] = 0;
+    }
 }

@@ -36,9 +36,9 @@
 #include <QSet>
 #include <QDir>
 #include <QCryptographicHash>
+#include <QNetworkReply>
 #include <PopIgnore.h>
 
-class QNetworkReply;
 class QNetworkAccessManager;
 
 class FileData
@@ -62,6 +62,7 @@ public:
 
     void triggerKill();
     void loadBlacklists(const QDir& curDir);
+    void setURL(const QString& url);
 
 signals:
     void updateKilled();
@@ -83,7 +84,7 @@ protected slots:
     void expressFinish(const QString& msg = QString());
     void advanceToNextFile();
 
-    void requestError();
+    void requestError(QNetworkReply::NetworkError code);
     void requestReadyRead();
     void requestFinished();
 

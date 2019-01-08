@@ -42,6 +42,7 @@
 
 // channel Includes
 #include "ChannelServer.h"
+#include "CharacterManager.h"
 #include "ManagerConnection.h"
 #include "TokuseiManager.h"
 
@@ -144,7 +145,8 @@ bool Parsers::PartyUpdate::Parse(libcomp::ManagerPacket *pPacketManager,
         return false;
     }
 
-    auto server = std::dynamic_pointer_cast<ChannelServer>(pPacketManager->GetServer());
+    auto server = std::dynamic_pointer_cast<ChannelServer>(
+        pPacketManager->GetServer());
 
     bool connectionsFound = false;
     uint8_t mode = p.ReadU8();
@@ -153,7 +155,7 @@ bool Parsers::PartyUpdate::Parse(libcomp::ManagerPacket *pPacketManager,
         ->GatherWorldTargetClients(p, connectionsFound);
     if(!connectionsFound)
     {
-        LOG_ERROR("Connections not found for CharacterLogin.\n");
+        LOG_ERROR("Connections not found for PartyUpdate.\n");
         return false;
     }
 
@@ -211,12 +213,21 @@ bool Parsers::PartyUpdate::Parse(libcomp::ManagerPacket *pPacketManager,
                 return false;
             }
 
+            std::set<std::shared_ptr<ChannelClientConnection>> resetStatusIcon;
             for(auto client : clients)
             {
                 auto state = client->GetClientState();
                 if(party && party->MemberIDsContains(state->GetWorldCID()))
                 {
                     // Adding/updating
+                    if(state->GetStatusIcon() == 2 ||
+                        (state->GetStatusIcon() == 1 &&
+                            party->GetLeaderCID() != state->GetWorldCID()))
+                    {
+                        // Party recruit icon set so clear it
+                        resetStatusIcon.insert(client);
+                    }
+
                     state->GetAccountLogin()->GetCharacterLogin()
                         ->SetPartyID(partyID);
                     state->SetParty(party);
@@ -227,6 +238,15 @@ bool Parsers::PartyUpdate::Parse(libcomp::ManagerPacket *pPacketManager,
                     state->GetAccountLogin()->GetCharacterLogin()
                         ->SetPartyID(0);
                     state->SetParty(nullptr);
+                }
+            }
+
+            if(resetStatusIcon.size() > 0)
+            {
+                auto characterManager = server->GetCharacterManager();
+                for(auto client : resetStatusIcon)
+                {
+                    characterManager->SetStatusIcon(client, 0);
                 }
             }
 

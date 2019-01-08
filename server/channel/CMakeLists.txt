@@ -37,6 +37,7 @@ SET(${PROJECT_NAME}_SRCS
     src/AICommand.cpp
     src/AIManager.cpp
     src/AIState.cpp
+    src/AllyState.cpp
     src/BazaarState.cpp
     src/ChannelClientConnection.cpp
     src/ChannelServer.cpp
@@ -55,6 +56,8 @@ SET(${PROJECT_NAME}_SRCS
     src/ManagerClientPacket.cpp
     src/ManagerConnection.cpp
     src/ManagerSystem.cpp
+    src/MatchManager.cpp
+    src/PerformanceTimer.cpp
     src/PlasmaState.cpp
     src/SkillManager.cpp
     src/TokuseiManager.cpp
@@ -62,6 +65,7 @@ SET(${PROJECT_NAME}_SRCS
     src/Zone.cpp
     src/ZoneInstance.cpp
     src/ZoneGeometry.cpp
+    src/ZoneGeometryLoader.cpp
     src/ZoneManager.cpp
     src/main.cpp
 )
@@ -73,6 +77,7 @@ SET(${PROJECT_NAME}_HDRS
     src/AICommand.h
     src/AIManager.h
     src/AIState.h
+    src/AllyState.h
     src/BazaarState.h
     src/ChannelClientConnection.h
     src/ChannelServer.h
@@ -91,7 +96,9 @@ SET(${PROJECT_NAME}_HDRS
     src/ManagerClientPacket.h
     src/ManagerConnection.h
     src/ManagerSystem.h
+    src/MatchManager.h
     src/Packets.h
+    src/PerformanceTimer.h
     src/PlasmaState.h
     src/SkillManager.h
     src/TokuseiManager.h
@@ -99,10 +106,12 @@ SET(${PROJECT_NAME}_HDRS
     src/Zone.h
     src/ZoneInstance.h
     src/ZoneGeometry.h
+    src/ZoneGeometryLoader.h
     src/ZoneManager.h
 )
 
 SET(${PROJECT_NAME}_SCHEMA
+    schema/aistate.xml
     schema/channelconfig.xml
     schema/clientstate.xml
     schema/entitystate.xml
@@ -124,6 +133,8 @@ OBJGEN_XML(${PROJECT_NAME}_STRUCTS
     ../../libcomp/schema
 
     # Output files
+    AIStateObject.h
+    AIStateObject.cpp
     EntityStateObject.h
     EntityStateObject.cpp
     ActivatedAbility.h
@@ -138,6 +149,10 @@ OBJGEN_XML(${PROJECT_NAME}_STRUCTS
     ClientCostAdjustment.cpp
     ClientStateObject.h
     ClientStateObject.cpp
+    DiasporaBase.h
+    DiasporaBase.cpp
+    DigitalizeState.h
+    DigitalizeState.cpp
     EventInstance.h
     EventInstance.cpp
     EventState.h
@@ -146,16 +161,27 @@ OBJGEN_XML(${PROJECT_NAME}_STRUCTS
     Loot.cpp
     LootBox.h
     LootBox.cpp
+    DestinyBox.h
+    DestinyBox.cpp
     PlayerExchangeSession.h
     PlayerExchangeSession.cpp
+    PvPBase.h
+    PvPBase.cpp
+    PvPPlayerStats.h
+    PvPPlayerStats.cpp
+    PvPInstanceStats.h
+    PvPInstanceStats.cpp
     TriFusionHostSession.h
     TriFusionHostSession.cpp
+    UBMatch.h
+    UBMatch.cpp
     ZoneInstanceObject.h
     ZoneInstanceObject.cpp
     ZoneObject.h
     ZoneObject.cpp
 )
 
+SOURCE_GROUP("Source Files\\Packets\\Amala" src/packets/amala/*)
 SOURCE_GROUP("Source Files\\Packets\\Game" src/packets/game/*)
 SOURCE_GROUP("Source Files\\Packets\\Internal" src/packets/internal/*)
 
@@ -276,11 +302,14 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/game/Warp.cpp                   # 0x016A
     src/packets/game/SkillExecuteInstant.cpp    # 0x016C
     src/packets/game/SyncCharacter.cpp          # 0x017E
+    src/packets/game/DemonAISet.cpp             # 0x0181
     src/packets/game/BazaarInteract.cpp         # 0x0184
     src/packets/game/SkillForget.cpp            # 0x0186
     src/packets/game/BazaarMarketEnd.cpp        # 0x0188
     src/packets/game/BazaarMarketComment.cpp    # 0x018B
-    src/packets/game/DemonAISet.cpp             # 0x0181
+    src/packets/game/PartyRecruitReply.cpp      # 0x018F
+    src/packets/game/PartyRecruit.cpp           # 0x0192
+    src/packets/game/StatusIcon.cpp             # 0x0194
     src/packets/game/MapFlag.cpp                # 0x0197
     src/packets/game/DemonCompendium.cpp        # 0x019B
     src/packets/game/ItemRepairMax.cpp          # 0x019F
@@ -296,6 +325,7 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/game/EnchantItem.cpp            # 0x01BE
     src/packets/game/Enchant.cpp                # 0x01C1
     src/packets/game/DungeonRecords.cpp         # 0x01C4
+    src/packets/game/ItemPromo.cpp              # 0x01C9
     src/packets/game/TriFusionJoin.cpp          # 0x01CD
     src/packets/game/TriFusionDemonUpdate.cpp   # 0x01D0
     src/packets/game/TriFusionRewardUpdate.cpp  # 0x01D3
@@ -334,16 +364,31 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/game/DemonLock.cpp              # 0x0233
     src/packets/game/DemonReunion.cpp           # 0x0235
     src/packets/game/DemonQuestReject.cpp       # 0x023A
+    src/packets/game/PvPConfirm.cpp             # 0x023E
+    src/packets/game/PvPBaseCapture.cpp         # 0x0242
+    src/packets/game/PvPBaseLeave.cpp           # 0x0247
+    src/packets/game/PvPJoin.cpp                # 0x0249
+    src/packets/game/PvPCancel.cpp              # 0x024B
     src/packets/game/PvPCharacterInfo.cpp       # 0x024D
     src/packets/game/AutoRecoveryUpdate.cpp     # 0x025A
     src/packets/game/ItemMix.cpp                # 0x025D
     src/packets/game/BikeBoostOn.cpp            # 0x0260
     src/packets/game/BikeBoostOff.cpp           # 0x0262
     src/packets/game/BikeDismount.cpp           # 0x0264
+    src/packets/game/TeamForm.cpp               # 0x0267
+    src/packets/game/TeamInvite.cpp             # 0x0269
+    src/packets/game/TeamAnswer.cpp             # 0x026C
+    src/packets/game/TeamKick.cpp               # 0x0270
+    src/packets/game/TeamLeaderUpdate.cpp       # 0x0273
+    src/packets/game/TeamLeave.cpp              # 0x0276
+    src/packets/game/TeamChat.cpp               # 0x0279
     src/packets/game/TeamInfo.cpp               # 0x027B
+    src/packets/game/TeamMemberList.cpp         # 0x027D
     src/packets/game/EquipmentSpiritFuse.cpp    # 0x0287
     src/packets/game/DemonQuestPending.cpp      # 0x028F
     src/packets/game/ItemDepoRemote.cpp         # 0x0296
+    src/packets/game/DiasporaBaseCapture.cpp    # 0x02C4
+    src/packets/game/DiasporaEnter.cpp          # 0x02C7
     src/packets/game/DemonDepoRemote.cpp        # 0x02EF
     src/packets/game/CommonSwitchUpdate.cpp     # 0x02F2
     src/packets/game/CommonSwitchInfo.cpp       # 0x02F4
@@ -353,6 +398,11 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/game/TriFusionSolo.cpp          # 0x0384
     src/packets/game/EquipmentSpiritDefuse.cpp  # 0x0386
     src/packets/game/DemonForceEnd.cpp          # 0x0389
+    src/packets/game/UBSpectatePlayer.cpp       # 0x038F
+    src/packets/game/UBProceed.cpp              # 0x0392
+    src/packets/game/UBLeave.cpp                # 0x0394
+    src/packets/game/UBLottoCancel.cpp          # 0x0398
+    src/packets/game/UBLottoJoin.cpp            # 0x039A
     src/packets/game/SearchEntryInfo.cpp        # 0x03A3
     src/packets/game/ITimeData.cpp              # 0x03A5
     src/packets/game/ITimeTalk.cpp              # 0x03A9
@@ -363,20 +413,34 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/game/CultureEnd.cpp             # 0x03B6
     src/packets/game/EquipmentModEdit.cpp       # 0x03CB
     src/packets/game/PAttributeDeadline.cpp     # 0x03EA
+    src/packets/game/MissionLeave.cpp           # 0x03ED
+    src/packets/game/MitamaReunion.cpp          # 0x03F1
+    src/packets/game/MitamaReset.cpp            # 0x03F3
     src/packets/game/DemonDepoList.cpp          # 0x03F5
     src/packets/game/DemonEquip.cpp             # 0x03FB
     src/packets/game/Barter.cpp                 # 0x03FE
+    src/packets/game/PentalphaData.cpp          # 0x0400
     src/packets/game/QuestTitle.cpp             # 0x0406
     src/packets/game/ReportPlayer.cpp           # 0x0407
     src/packets/game/Blacklist.cpp              # 0x0408
     src/packets/game/BlacklistUpdate.cpp        # 0x040A
+    src/packets/game/DestinyBoxData.cpp         # 0x040D
+    src/packets/game/DestinyLotto.cpp           # 0x0410
     src/packets/game/DigitalizePoints.cpp       # 0x0414
     src/packets/game/DigitalizeAssist.cpp       # 0x0418
+    src/packets/game/DigitalizeAssistLearn.cpp  # 0x041A
+    src/packets/game/DigitalizeAssistRemove.cpp # 0x041C
     src/packets/game/VABox.cpp                  # 0x041E
     src/packets/game/VABoxAdd.cpp               # 0x0420
     src/packets/game/VABoxRemove.cpp            # 0x0422
     src/packets/game/VAChange.cpp               # 0x0424
     src/packets/game/VABoxMove.cpp              # 0x0427
+    src/packets/game/ReunionPoints.cpp          # 0x0432
+    src/packets/game/ReunionExtract.cpp         # 0x0434
+    src/packets/game/ReunionInject.cpp          # 0x0436
+
+    # Amala Network packets
+    src/packets/amala/AccountDumpRequest.cpp    # 0x1000
 
     #Internal packets
     src/packets/internal/SetWorldInfo.cpp          # 0x1002
@@ -390,6 +454,7 @@ SET(${PROJECT_NAME}_PACKETS
     src/packets/internal/PartyUpdate.cpp           # 0x100A
     src/packets/internal/ClanUpdate.cpp            # 0x100B
     src/packets/internal/WebGame.cpp               # 0x100C
+    src/packets/internal/TeamUpdate.cpp            # 0x100D
 )
 
 IF(SINGLE_SOURCE_PACKETS)
@@ -424,9 +489,9 @@ ENDIF(USE_COTIRE)
 
 UPX_WRAP(${PROJECT_NAME})
 
-INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR})
+INSTALL(TARGETS ${PROJECT_NAME} DESTINATION ${COMP_INSTALL_DIR} COMPONENT channel)
 
 # Include the PDB file if on Windows
 IF(WIN32)
-    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR})
+    INSTALL(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${COMP_INSTALL_DIR} COMPONENT channel)
 ENDIF(WIN32)

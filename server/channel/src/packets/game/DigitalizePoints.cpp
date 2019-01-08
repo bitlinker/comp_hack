@@ -28,11 +28,16 @@
 #include "Packets.h"
 
 // libcomp Includes
+#include <DefinitionManager.h>
+#include <ManagerPacket.h>
 #include <Packet.h>
 #include <PacketCodes.h>
 
+// object Includes
+#include <CharacterProgress.h>
+
 // channel Includes
-#include "ChannelClientConnection.h"
+#include "ChannelServer.h"
 
 using namespace channel;
 
@@ -40,37 +45,42 @@ bool Parsers::DigitalizePoints::Parse(libcomp::ManagerPacket *pPacketManager,
     const std::shared_ptr<libcomp::TcpConnection>& connection,
     libcomp::ReadOnlyPacket& p) const
 {
-    (void)pPacketManager;
-
     if(p.Size() != 4)
     {
         return false;
     }
 
-    /// @todo: implement non-default values
-
     int32_t unknown = p.ReadS32Little();
-    (void)unknown;
+    (void)unknown;  // Always 0
+
+    auto server = std::dynamic_pointer_cast<ChannelServer>(
+        pPacketManager->GetServer());
+    auto definitionManager = server->GetDefinitionManager();
+
+    auto client = std::dynamic_pointer_cast<ChannelClientConnection>(
+        connection);
+    auto state = client->GetClientState();
+    auto cState = state->GetCharacterState();
+    auto character = cState->GetEntity();
+    auto progress = character ? character->GetProgress().Get() : nullptr;
     
     libcomp::Packet reply;
-    reply.WritePacketCode(ChannelToClientPacketCode_t::PACKET_DIGITALIZE_POINTS);
+    reply.WritePacketCode(
+        ChannelToClientPacketCode_t::PACKET_DIGITALIZE_POINTS);
     reply.WriteS32Little(0);    // Unknown
-    reply.WriteS32Little(0);    // Unknown
+    reply.WriteS32Little(progress ? 0 : -1);
 
-    std::vector<uint8_t> families = {
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,  // Law
-        51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, // Neutral
-        101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113 // Chaos
-    };
-
-    for(size_t i = 0; i < 43; i++)
+    if(progress)
     {
-        reply.WriteU8(families[i]);
-        reply.WriteS8(0);       // Digitalize Level
-        reply.WriteS32Little(0);    // Digitalize Points
+        for(uint8_t raceID : definitionManager->GetGuardianRaceIDs())
+        {
+            reply.WriteU8(raceID);
+            reply.WriteS8(progress->GetDigitalizeLevels(raceID));
+            reply.WriteS32Little(progress->GetDigitalizePoints(raceID));
+        }
     }
 
-    connection->SendPacket(reply);
+    client->SendPacket(reply);
 
     return true;
 }

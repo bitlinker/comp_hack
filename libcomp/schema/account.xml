@@ -31,6 +31,7 @@
         <member type="u32" name="Timestamp"/>
         <member type="string" name="FromName"/>
         <member type="string" name="GiftMessage"/>
+        <member type="s32" name="DistributionMessageID"/>
     </object>
     <object name="AccountWorldData" location="world" scriptenabled="true">
         <member type="Account*" name="Account" key="true" unique="true"/>
@@ -50,6 +51,8 @@
         <member type="list" name="Blacklist">
             <element type="string"/>
         </member>
+        <member type="u32" name="ReunionPoints"/>
+        <member type="u32" name="MitamaReunionPoints"/>
 
         <member type="map" name="ActionCooldowns">
             <key type="s32"/>
@@ -83,5 +86,16 @@
         <member type="u16" name="StackSize"/>
         <member type="u32" name="Cost"/>
         <member type="bool" name="Sold"/>
+    </object>
+    <object name="PentalphaMatch" location="world" scriptenabled="true">
+        <member type="u32" name="StartTime" key="true" unique="true"/>
+        <member type="u32" name="EndTime" key="true" unique="true"/>
+        <member type="pref" name="Previous"/>
+        <member type="array" name="Points" size="5">
+            <element type="s32"/>
+        </member>
+        <member type="array" name="Rankings" size="5">
+            <element type="u8"/>
+        </member>
     </object>
 </objgen>

@@ -28,7 +28,9 @@
 #define LIBCOMP_SRC_BASESERVER_H
 
 // Standard C++14 Includes
+#include <PushIgnore.h>
 #include <gsl/gsl>
+#include <PopIgnore.h>
 
 // libcomp Includes
 #include "Database.h"
@@ -215,6 +217,11 @@ public:
             std::forward<Args>(args)...);
     }
 
+    /**
+     * Called when the server has started.
+     */
+    virtual void ServerReady();
+
 protected:
     /**
      * Runs the server until a shutdown message is received or the program
@@ -222,11 +229,6 @@ protected:
      * @return 0 on success, 1 on failure
      */
     virtual int Run();
-
-    /**
-     * Called when the server has started.
-     */
-    virtual void ServerReady();
 
     /**
      * Create one or many workers to handle connection requests based upon

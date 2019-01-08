@@ -47,6 +47,39 @@ namespace channel
 {
 
 class ChannelServer;
+class ZoneInstance;
+
+/**
+ * Possible results from an ActionRunScript action returned from the script
+ * being executed.
+ */
+enum ActionRunScriptResult_t : int8_t
+{
+    SUCCESS = 0, //!< No error
+    FAIL = -1,  //!< Generic failure
+    LOG_OFF = -2    //!< Not a failure but log off the client
+};
+
+/**
+ * Struct containing optional parameters supplied to
+ * ActionManager::PerformActions to simplify the function signature.
+ */
+struct ActionOptions
+{
+    // Action group ID used for specific action logic
+    uint32_t GroupID = 0;
+
+    // Forces an auto-only context when processing events. Does not apply
+    // when context switching.
+    bool AutoEventsOnly = false;
+
+    // Keep track of the current EventPeformActions index for the client
+    bool IncrementEventIndex = false;
+
+    // Disallow interruption of any events started from the action set.
+    // Overrides option on ActionStartEvent.
+    bool NoEventInterrupt = false;
+};
 
 /**
  * Class to manage actions when triggering a spot or interacting with
@@ -72,25 +105,51 @@ public:
      * @param actions List of actions to perform.
      * @param sourceEntityID ID of the entity performing the actions.
      * @param zone Pointer to the current zone the action is being performed in
-     * @param groupID Optional action group ID used for specific action logic
-     * @param autoEventsOnly Optional parameter to force an auto-only context
-     *  when processing events. Does not apply when context switching.
+     * @param options Optional parameters to modify action execution
      */
     void PerformActions(const std::shared_ptr<ChannelClientConnection>& client,
         const std::list<std::shared_ptr<objects::Action>>& actions,
         int32_t sourceEntityID, const std::shared_ptr<Zone>& zone = nullptr,
-        uint32_t groupID = 0, bool autoEventsOnly = false);
+        ActionOptions options = {});
+
+    /**
+     * Send a stage effect notification to the client.
+     * @param client Client to display the effect for
+     * @param messageID ID of the effect message
+     * @param effectType Effect type
+     * @param includeMessage If true, the same message will print to the
+     *  console as well
+     * @param messageValue Optional message value to display inline in the
+     *  message
+     */
+    void SendStageEffect(const std::shared_ptr<ChannelClientConnection>& client,
+        int32_t messageID, int8_t effectType, bool includeMessage,
+        int32_t messageValue = 0);
 
 private:
     struct ActionContext
     {
         std::shared_ptr<ChannelClientConnection> Client;
         std::shared_ptr<objects::Action> Action;
+        ActionOptions Options;
         int32_t SourceEntityID = 0;
-        uint32_t GroupID = 0;
         std::shared_ptr<Zone> CurrentZone;
-        bool AutoEventsOnly = false;
+        bool ChannelChanged = false;
     };
+
+    /**
+     * Get world CIDs associated to the action context of the supplied
+     * action
+     * @param action Pointer to the current action
+     * @param ctx ActionContext for the executing source information.
+     * @param failure Output parameter designating if a failure occurred
+     * @param preFiltered Output parameter designating if the set was
+     *  prefiltered or if it needs to be filtered still
+     * @retval Set of world CIDs
+     */
+    std::set<int32_t> GetActionContextCIDs(
+        const std::shared_ptr<objects::Action>& action, ActionContext& ctx,
+        bool& failure, bool& preFiltered);
 
     /**
      * Start an event sequence for the client.
@@ -259,6 +318,13 @@ private:
     bool Delay(ActionContext& ctx);
 
     /**
+     * Execute a custom script to perform various types of actions.
+     * @param ctx ActionContext for the executing source information.
+     * @retval false The action list should stop after this action.
+     */
+    bool RunScript(ActionContext& ctx);
+
+    /**
      * Move the current time trial results to the record set.
      * @param ctx ActionContext for the executing source information.
      * @param rewardItem Item obtained from the time trial
@@ -275,11 +341,19 @@ private:
      * @param ctx ActionContext for the executing source information.
      * @param requireClient Check that the client is on the context if supplied
      *  and fail if it is not
+     * @param requireZone Check that the action is taking place with a current
+     *  zone. Nearly all actions require a zone.
      * @return true on success, false on failure
      */
     template <class T>
-    std::shared_ptr<T> GetAction(ActionContext& ctx, bool requireClient)
+    std::shared_ptr<T> GetAction(ActionContext& ctx, bool requireClient,
+        bool requireZone = true)
     {
+        if(requireZone && !VerifyZone(ctx, typeid(T).name()))
+        {
+            return nullptr;
+        }
+
         if(requireClient && !VerifyClient(ctx, typeid(T).name()))
         {
             return nullptr;
@@ -326,6 +400,15 @@ private:
      * @return true if the client exists, false if it does not
      */
     bool VerifyClient(ActionContext& ctx, const libcomp::String& typeName);
+
+    /**
+     * Verify that a zone is on the context and print an error message
+     * if one is not.
+     * @param ctx ActionContext for the executing source information
+     * @param typeName Name of the action type being verified
+     * @return true if a zone exists, false if it does not
+     */
+    bool VerifyZone(ActionContext& ctx, const libcomp::String& typeName);
 
     /**
      * Prepare the transformation script from the action on the supplied

@@ -28,13 +28,13 @@ SET(VERSION_YEAR  2018)
 SET(VERSION_MAJOR 3)
 
 # Minor release (1 = SP1).
-SET(VERSION_MINOR 8)
+SET(VERSION_MINOR 9)
 
 # Patch version (a hotfix).
-SET(VERSION_PATCH 9)
+SET(VERSION_PATCH 2)
 
 # Codename for the version.
-SET(VERSION_CODENAME "Hathor (UNSTABLE)")
+SET(VERSION_CODENAME "Hathor (RC2)")
 
 #
 # END OF VERSION CONSTANTS
@@ -56,6 +56,13 @@ ENDIF()
 
 PROJECT(comp_hack)
 
+# Detect if the host processor is x86 compatible.
+IF(CMAKE_SYSTEM_PROCESSOR MATCHES "x86|X86|amd64|AMD64|x86_64")
+    SET(X86 TRUE)
+ELSE()
+    SET(X86 FALSE)
+ENDIF()
+
 # Print the CMake version for debugging.
 MESSAGE("-- CMake version: ${CMAKE_VERSION}")
 
@@ -64,6 +71,9 @@ SET(COMP_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 # Option to build the dream (if the folder is there).
 OPTION(BUILD_DREAM "Build the dream." ON)
+
+# Option to build only the updater.
+OPTION(UPDATER_ONLY "Build only the updater." OFF)
 
 # Include our custom cmake modules.
 SET(CMAKE_MODULE_PATH
@@ -86,19 +96,56 @@ SET(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
 SET(CPACK_PACKAGE_VERSION_MAJOR ${VERSION_MAJOR})
 SET(CPACK_PACKAGE_VERSION_MINOR ${VERSION_MINOR})
 SET(CPACK_PACKAGE_VERSION_PATCH ${VERSION_PATCH})
+SET(CPACK_COMPONENTS_ALL runtime lobby world channel tools config webroot docs)
+
+SET(CPACK_COMPONENT_RUNTIME_DISPLAY_NAME "C++ Runtime Library")
+SET(CPACK_COMPONENT_RUNTIME_DESCRIPTION "Runtime library needed by the software.")
+SET(CPACK_COMPONENT_RUNTUME_REQUIRED TRUE)
+SET(CPACK_COMPONENT_LOBBY_DISPLAY_NAME "Lobby Server")
+SET(CPACK_COMPONENT_LOBBY_DESCRIPTION "Lobby server to manage characters and login accounts.")
+SET(CPACK_COMPONENT_WORLD_DISPLAY_NAME "World Server")
+SET(CPACK_COMPONENT_WORLD_DESCRIPTION "World server to manage communication between channels.")
+SET(CPACK_COMPONENT_CHANNEL_DISPLAY_NAME "Channel Server")
+SET(CPACK_COMPONENT_CHANNEL_DESCRIPTION "Channel server to manage gameplay.")
+SET(CPACK_COMPONENT_TOOLS_DISPLAY_NAME "Tools")
+SET(CPACK_COMPONENT_TOOLS_DESCRIPTION "Tools for debug, development and content creation.")
+SET(CPACK_COMPONENT_CONFIG_DISPLAY_NAME "Example Configuration")
+SET(CPACK_COMPONENT_CONFIG_DESCRIPTION "Example configuration files to get up and running.")
+SET(CPACK_COMPONENT_WEBROOT_DISPLAY_NAME "API Website Files")
+SET(CPACK_COMPONENT_WEBROOT_DESCRIPTION "Website files for the internal API (in the lobby). This includes the example account manager site.")
+SET(CPACK_COMPONENT_WEBROOT_DEPENDS lobby)
+SET(CPACK_COMPONENT_DOCS_DISPLAY_NAME "Documentation")
+SET(CPACK_COMPONENT_DOCS_DESCRIPTION "Documentation for the server.")
+
+SET(CPACK_COMPONENT_LOBBY_GROUP servers)
+SET(CPACK_COMPONENT_WORLD_GROUP servers)
+SET(CPACK_COMPONENT_CHANNEL_GROUP servers)
+
+SET(CPACK_COMPONENT_GROUP_SERVERS_DISPLAY_NAME "Servers Applications")
+SET(CPACK_COMPONENT_GROUP_SERVERS_DESCRIPTION "Main server applications.")
+SET(CPACK_COMPONENT_GROUP_SERVERS_EXPANDED TRUE)
 
 IF(WIN32)
     SET(COMP_INSTALL_DIR "/")
-    SET(CPACK_GENERATOR "ZIP;WIX")
+
+    IF(UPDATER_ONLY)
+        SET(CPACK_GENERATOR "ZIP")
+    ELSE()
+        SET(CPACK_GENERATOR "WIX;ZIP")
+    ENDIF()
 
     #SET(CPACK_WIX_ROOT "C:\\Program Files (x86)\\WiX Toolset v3.11")
     SET(CPACK_WIX_UPGRADE_GUID "A253D8BE-ED6C-43EF-A1C5-F378F269C9E4")
     SET(CPACK_WIX_PRODUCT_ICON "${CMAKE_SOURCE_DIR}/tools/bdpatch/res/bdpatch.ico")
+    SET(CPACK_WIX_UI_BANNER "${CMAKE_SOURCE_DIR}/contrib/wix-banner.png")
+    SET(CPACK_WIX_UI_DIALOG "${CMAKE_SOURCE_DIR}/contrib/wix-background.png")
     SET(CPACK_WIX_PROGRAM_MENU_FOLDER "COMP_hack")
     SET(CPACK_WIX_PROPERTY_ARPHELPLINK "https://github.com/comphack/comp_hack")
     SET(CPACK_WIX_PATCH_FILE "${CMAKE_SOURCE_DIR}/contrib/services.wxs")
+
+    SET(CPACK_WIX_EXTENSIONS "WixFirewallExtension")
     SET(CPACK_PACKAGE_INSTALL_DIRECTORY "COMP_hack")
-    SET(CPACK_PACKAGE_EXECUTABLES "comp_capgrep;Capture Analysis;comp_logger;Capture Logger;comp_map;Enemy Mapping")
+    SET(CPACK_PACKAGE_EXECUTABLES "comp_capgrep;Capture Analysis;comp_logger;Capture Logger;comp_cathedral;Cathedral of Content")
 
     SET(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
 
@@ -107,6 +154,7 @@ IF(WIN32)
     INSTALL(
         PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
         DESTINATION /
+        COMPONENT runtime
     )
 
     FIND_PACKAGE(Qt5Widgets REQUIRED)
@@ -137,7 +185,13 @@ IF(WIN32)
         "${CMAKE_SOURCE_DIR}/contrib/winconfig/setup.xml"
         "${CMAKE_SOURCE_DIR}/contrib/winconfig/newcharacter.xml"
         "${CMAKE_SOURCE_DIR}/contrib/testing/constants.xml"
-        DESTINATION config)
+        DESTINATION config
+        COMPONENT config)
+
+    INSTALL(DIRECTORY
+        "${CMAKE_SOURCE_DIR}/contrib/webroot"
+        DESTINATION /
+        COMPONENT webroot)
 ELSE()
     SET(COMP_INSTALL_DIR "bin")
     SET(CPACK_GENERATOR "TGZ;TBZ2;DEB")
@@ -177,6 +231,9 @@ OPTION(DISABLE_TESTING "Disable all tests." OFF)
 
 # Option for the static runtime on Windows.
 OPTION(USE_STATIC_RUNTIME "Use the static MSVC runtime." OFF)
+
+# Option to use pre-built objects & objgen.
+OPTION(USE_PREBUILT_OBJECTS "Use pre-built objects and objgen" OFF)
 
 IF(WIN32)
     OPTION(GENERATE_DOCUMENTATION "Generate documentation for the project." OFF)
@@ -261,7 +318,7 @@ ENDIF()
 ADD_LINKER_FLAGS(AUTO /ignore:4099)
 
 # UTF-8 source encoding for MSVC.
-ADD_COMPILER_FLAGS(AUTO /utf-8)
+ADD_COMPILER_FLAGS(AUTO /utf-8 /bigobj)
 
 # Build for Windows 7 and higher.
 # See: https://msdn.microsoft.com/en-us/library/6sehtctf.aspx
@@ -298,6 +355,11 @@ ELSE(${LIBCOMP_ENDIAN})
     ADD_DEFINITIONS(-DLIBCOMP_LITTLEENDIAN)
 ENDIF(${LIBCOMP_ENDIAN})
 
+# Require C++14 to build the project.
+SET(CMAKE_CXX_STANDARD 14)
+SET(CMAKE_CXX_STANDARD_REQUIRED ON)
+SET(CMAKE_CXX_EXTENSIONS OFF)
+
 # Default Linux (gcc/clang) builds to debug and MinGW builds to release.
 IF(NOT MSVC)
     # Ensure C++14 support is on.
@@ -309,7 +371,11 @@ IF(NOT MSVC)
 
     # Determine basic gcc/clang/mingw flags for release mode.
     IF(BUILD_OPTIMIZED)
-        ADD_COMPILER_FLAGS(AUTO -O3 -msse3)
+        IF(X86)
+            ADD_COMPILER_FLAGS(AUTO -O3 -msse3)
+        ELSE()
+            ADD_COMPILER_FLAGS(AUTO -O3)
+        ENDIF()
     ENDIF(BUILD_OPTIMIZED)
 
     # Strip release builds.
@@ -333,6 +399,9 @@ ELSE()
         -Wconversion -Wsign-conversion -g)
 ENDIF()
 
+# Ignore the warning about mixed use of override.
+ADD_COMPILER_FLAGS(AUTO -Wno-inconsistent-missing-override)
+
 # Warning level 4 and treat warnings as errors (MSVC).
 # ADD_COMPILER_FLAGS(AUTO /W4 /WX)
 
@@ -349,20 +418,79 @@ ENDIF(COVERALLS)
 # Place all executables in the same directory.
 SET(EXECUTABLE_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/bin")
 
+# Add in the build of libobjgen and comp_objgen.
+IF(USE_PREBUILT_OBJECTS)
+    ADD_EXECUTABLE(comp_objgen IMPORTED)
+
+    IF(WIN32)
+        SET_TARGET_PROPERTIES(comp_objgen PROPERTIES IMPORTED_LOCATION
+            "${CMAKE_SOURCE_DIR}/deps/objgen/comp_objgen.exe")
+    ELSE()
+        SET_TARGET_PROPERTIES(comp_objgen PROPERTIES IMPORTED_LOCATION
+            "${CMAKE_SOURCE_DIR}/deps/objgen/bin/comp_objgen")
+    ENDIF(WIN32)
+
+    IF(WIN32)
+        ADD_LIBRARY(objgen STATIC IMPORTED)
+        SET_TARGET_PROPERTIES(objgen PROPERTIES
+            IMPORTED_LOCATION_RELEASE "${CMAKE_SOURCE_DIR}/deps/objgen/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objgen${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            IMPORTED_LOCATION_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}/deps/objgen/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objgen${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            IMPORTED_LOCATION_DEBUG "${CMAKE_SOURCE_DIR}/deps/objgen/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objgen${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    ELSE()
+        ADD_LIBRARY(objgen STATIC IMPORTED)
+        SET_TARGET_PROPERTIES(objgen PROPERTIES IMPORTED_LOCATION
+            "${CMAKE_SOURCE_DIR}/deps/objgen/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objgen${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    ENDIF()
+
+    SET_TARGET_PROPERTIES(objgen PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/deps/objgen/include")
+
+    IF(WIN32)
+        ADD_LIBRARY(libobjects STATIC IMPORTED)
+        SET_TARGET_PROPERTIES(libobjects PROPERTIES
+            IMPORTED_LOCATION_RELEASE "${CMAKE_SOURCE_DIR}/deps/libobjects/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objects${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            IMPORTED_LOCATION_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}/deps/libobjects/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objects${CMAKE_STATIC_LIBRARY_SUFFIX}"
+            IMPORTED_LOCATION_DEBUG "${CMAKE_SOURCE_DIR}/deps/libobjects/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objects${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    ELSE()
+        ADD_LIBRARY(libobjects STATIC IMPORTED)
+        SET_TARGET_PROPERTIES(libobjects PROPERTIES IMPORTED_LOCATION
+            "${CMAKE_SOURCE_DIR}/deps/libobjects/lib/${CMAKE_STATIC_LIBRARY_PREFIX}objects${CMAKE_STATIC_LIBRARY_SUFFIX}")
+    ENDIF()
+
+ENDIF(USE_PREBUILT_OBJECTS)
+
 # List of common include paths for every project using libobjgen.
-SET(LIBOBJGEN_INCLUDES
-    ${GSL_INCLUDE_DIRS}
-    ${CMAKE_SOURCE_DIR}/libobjgen/src
-    # Needed for PushIgnore.h and PopIgnore.h.
-    ${CMAKE_SOURCE_DIR}/libcomp/src
-)
+IF(USE_PREBUILT_OBJECTS)
+    SET(LIBOBJGEN_INCLUDES
+        ${GSL_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/deps/objgen/include
+        # Needed for PushIgnore.h and PopIgnore.h.
+        ${CMAKE_SOURCE_DIR}/libcomp/src
+    )
+ELSE()
+    SET(LIBOBJGEN_INCLUDES
+        ${GSL_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/libobjgen/src
+        # Needed for PushIgnore.h and PopIgnore.h.
+        ${CMAKE_SOURCE_DIR}/libcomp/src
+    )
+ENDIF(USE_PREBUILT_OBJECTS)
 
 # List of common include paths for every project using libcomp.
-SET(LIBCOMP_INCLUDES
-    ${OPENSSL_INCLUDE_DIR}
-    ${CMAKE_SOURCE_DIR}/libcomp/src
-    ${CMAKE_BINARY_DIR}/libcomp/objgen
-)
+IF(USE_PREBUILT_OBJECTS)
+    SET(LIBCOMP_INCLUDES
+        ${LIBOBJGEN_INCLUDES}
+        ${OPENSSL_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/libcomp/src
+        ${CMAKE_SOURCE_DIR}/deps/libobjects/include
+    )
+ELSE()
+    SET(LIBCOMP_INCLUDES
+        ${OPENSSL_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/libcomp/src
+        ${CMAKE_BINARY_DIR}/libcomp/objgen
+    )
+ENDIF(USE_PREBUILT_OBJECTS)
 
 SET(COVERALLS_SRCS "" CACHE INTERNAL "Coverage source files")
 
@@ -391,6 +519,7 @@ MACRO(ADD_QT_DEPS target)
             DIRECTORY
             "${CMAKE_CURRENT_BINARY_DIR}/windeployqt/"
             DESTINATION /
+            COMPONENT tools
         )
     ENDIF()
 ENDMACRO()
@@ -593,16 +722,22 @@ ENDMACRO(CREATE_GTESTS)
 
 # If the dream code exists in the "dream" directory and BUILD_DREAM is set,
 # build the dream application as well.
-IF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/dream" AND BUILD_DREAM)
+IF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/dream" AND BUILD_DREAM AND NOT UPDATER_ONLY)
     ADD_SUBDIRECTORY(dream)
-ENDIF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/dream" AND BUILD_DREAM)
+ENDIF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/dream" AND BUILD_DREAM AND NOT UPDATER_ONLY)
 
 # This must come first so that objgen is found for the macro bellow. As a
 # consequence, none of the tools can define their own structures to be
 # generated by objgen. This is not a big deal because for the most part
 # these should be defined in libcomp.
-ADD_SUBDIRECTORY(deps)
-ADD_SUBDIRECTORY(libobjgen)
+IF(NOT UPDATER_ONLY)
+    ADD_SUBDIRECTORY(deps)
+ENDIF(NOT UPDATER_ONLY)
+
+IF(NOT USE_PREBUILT_OBJECTS AND NOT UPDATER_ONLY)
+    ADD_SUBDIRECTORY(libobjgen)
+ENDIF(NOT USE_PREBUILT_OBJECTS AND NOT UPDATER_ONLY)
+
 ADD_SUBDIRECTORY(tools)
 
 # This macro generates code using objgen. The arguments must start with the
@@ -709,23 +844,21 @@ IF(NOT WIN32 AND NOT BSD)
     ENDIF(SYSTEMD_FOUND)
 ENDIF(NOT WIN32 AND NOT BSD)
 
-ADD_SUBDIRECTORY(libcomp)
-#ADD_SUBDIRECTORY(chanman)
+IF(NOT UPDATER_ONLY)
+    ADD_SUBDIRECTORY(libcomp)
+    #ADD_SUBDIRECTORY(chanman)
+ENDIF(NOT UPDATER_ONLY)
 
-# If the client code exists in the "client" directory and DISABLE_CLIENT is not
-# defined, build the client application as well.
-IF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/client" AND NOT ${DISABLE_CLIENT})
-    #ADD_SUBDIRECTORY(client)
-ENDIF(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/client" AND NOT ${DISABLE_CLIENT})
-
-#ADD_SUBDIRECTORY(console)
-ADD_SUBDIRECTORY(server)
+IF(NOT UPDATER_ONLY)
+    #ADD_SUBDIRECTORY(console)
+    ADD_SUBDIRECTORY(server)
+ENDIF(NOT UPDATER_ONLY)
 
 # Windows does not have the server spawning code.
-IF(NOT WIN32)
+IF(NOT WIN32 AND NOT UPDATER_ONLY)
     ADD_SUBDIRECTORY(libtester)
     ADD_SUBDIRECTORY(client)
-ENDIF(NOT WIN32)
+ENDIF(NOT WIN32 AND NOT UPDATER_ONLY)
 
 #ADD_SUBDIRECTORY(updater)
 
@@ -733,11 +866,14 @@ ENDIF(NOT WIN32)
 GET_PROPERTY(targets GLOBAL PROPERTY DOC_TARGETS)
 ADD_CUSTOM_TARGET(doc ALL DEPENDS ${targets})
 SET_TARGET_PROPERTIES(doc PROPERTIES FOLDER "SpecialTargets")
-ADD_SUBDIRECTORY(docs)
 
-IF(NOT BSD)
+IF(NOT UPDATER_ONLY)
+    ADD_SUBDIRECTORY(docs)
+ENDIF(NOT UPDATER_ONLY)
+
+IF(NOT BSD AND NOT UPDATER_ONLY)
     #ADD_SUBDIRECTORY(features)
-ENDIF(NOT BSD)
+ENDIF(NOT BSD AND NOT UPDATER_ONLY)
 
 # On Linux system, install the icons where they can be found. These are used
 # for the application menu launcher icons.
@@ -781,5 +917,6 @@ FIND_PACKAGE(Doxygen)
 
 If(DOXYGEN_FOUND AND GENERATE_DOCUMENTATION AND NOT WIN32)
     INSTALL(DIRECTORY ${CMAKE_BINARY_DIR}/api
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/comp_hack)
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/comp_hack
+        COMPONENT docs)
 ENDIF(DOXYGEN_FOUND AND GENERATE_DOCUMENTATION AND NOT WIN32)

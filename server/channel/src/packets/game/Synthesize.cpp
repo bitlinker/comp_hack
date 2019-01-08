@@ -40,6 +40,8 @@
 #include <ActivatedAbility.h>
 #include <Item.h>
 #include <ItemBox.h>
+#include <MiSkillData.h>
+#include <MiSkillItemStatusCommonData.h>
 #include <MiSynthesisData.h>
 #include <MiSynthesisItemData.h>
 #include <PlayerExchangeSession.h>
@@ -179,8 +181,8 @@ bool Parsers::Synthesize::Parse(libcomp::ManagerPacket *pPacketManager,
                     switch(exchangeSession->GetType())
                     {
                     case objects::PlayerExchangeSession::Type_t::SYNTH_MELEE:
-                        expertRank = cState->GetExpertiseRank(definitionManager,
-                            EXPERTISE_CHAIN_SWORDSMITH);
+                        expertRank = cState->GetExpertiseRank(
+                            EXPERTISE_CHAIN_SWORDSMITH, definitionManager);
                         for(auto pair : SVR_CONST.ADJUSTMENT_SKILLS)
                         {
                             if(pair.second[0] == 2 &&
@@ -197,8 +199,8 @@ bool Parsers::Synthesize::Parse(libcomp::ManagerPacket *pPacketManager,
                         }
                         break;
                     case objects::PlayerExchangeSession::Type_t::SYNTH_GUN:
-                        expertRank = cState->GetExpertiseRank(definitionManager,
-                            EXPERTISE_CHAIN_ARMS_MAKER);
+                        expertRank = cState->GetExpertiseRank(
+                            EXPERTISE_CHAIN_ARMS_MAKER, definitionManager);
                         for(auto pair : SVR_CONST.ADJUSTMENT_SKILLS)
                         {
                             if(pair.second[0] == 3 &&
@@ -257,8 +259,9 @@ bool Parsers::Synthesize::Parse(libcomp::ManagerPacket *pPacketManager,
         // Boost the skill execution expertise growth rate based upon
         // success or failure
         auto activated = cState->GetActivatedAbility();
-        if(activated &&
-            activated->GetSkillID() == synthData->GetBaseSkillID())
+        uint32_t activatedSkillID = activated ? activated->GetSkillData()
+            ->GetCommon()->GetID() : 0;
+        if(activatedSkillID && activatedSkillID == synthData->GetBaseSkillID())
         {
             activated->SetExpertiseBoost(synthData->GetExpertBoosts(
                 success ? 1 : 0));

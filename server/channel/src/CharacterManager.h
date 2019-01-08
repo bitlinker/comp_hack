@@ -53,7 +53,9 @@ class ItemDrop;
 class MiDevilData;
 class MiDevilLVUpData;
 class MiDevilLVUpRateData;
+class MiMitamaReunionSetBonusData;
 class MiItemData;
+class PostItem;
 }
 
 typedef objects::MiCorrectTbl::ID_t CorrectTbl;
@@ -170,6 +172,15 @@ public:
     void SendEntityStats(std::shared_ptr<
         ChannelClientConnection> client, int32_t entityID,
         bool includeSelf = true);
+
+    /**
+     * Revive the client's character (or demon) in a specific way
+     * @param client Pointer to the client connection
+     * @param revivalMode Specific revival mode to use. Types are listed
+     *  in constants.
+     */
+    void ReviveCharacter(std::shared_ptr<
+        ChannelClientConnection> client, int32_t revivalMode);
 
     /**
      * Write a revival action notification packet.
@@ -484,6 +495,14 @@ public:
         bool minLast = false);
 
     /**
+     * Create loot from pre-filtered drops
+     * @param drops List of pointers to item drops
+     * @return List of pointers to converted Loot representations
+     */
+    std::list<std::shared_ptr<objects::Loot>> CreateLootFromDrops(
+        const std::list<std::shared_ptr<objects::ItemDrop>>& drops);
+
+    /**
      * Send the loot item data related to a loot box to one or more clients.
      * @param clients List of clients to send the packet to
      * @param lState Pointer to the entity state of the loot box
@@ -560,7 +579,7 @@ public:
 
     /**
      * Check if the specified item definition belongs to a CP item
-     * @param Pointer to the item definition
+     * @param itemData Pointer to the item definition
      * @return true if the definition belongs to a CP item, false if
      *  it does not
      */
@@ -649,6 +668,33 @@ public:
         bool replyToClient, bool force = false, int8_t forceRank = -1);
 
     /**
+     * Get the total number of reunion ranks achieved by the supplied demon
+     * @param demon Pointer to the demon
+     * @return Total number of reunion ranks achieved
+     */
+    uint16_t GetReunionRankTotal(const std::shared_ptr<objects::Demon> demon);
+
+    /**
+     * Convert a demon into its upgraded mitama demon type
+     * @param client Pointer to the client connection
+     * @param demonID Object ID of the demon to convert
+     * @param growthType New growth type to use for the demon
+     * @param mitamaType Mitama type to use for the demon
+     * @return true if the demon was converted successfully
+     */
+    bool MitamaDemon(const std::shared_ptr<ChannelClientConnection> client,
+        int64_t demonID, uint8_t growthType, uint8_t mitamaType);
+
+    /**
+     * Check if the specified devil definition is a mitama'd type
+     * @param devilData Pointer to the demon definition
+     * @return true if the definition belongs to a mitama'd type, false if
+     *  it does not
+     */
+    bool IsMitamaDemon(const std::shared_ptr<
+        objects::MiDevilData>& devilData) const;
+
+    /**
      * Get a demon's familiarity rank from their current familiarity points.
      * @param familiarity Demon's familiarity points
      * @return Converted familiarity rank from -3 to +4
@@ -722,6 +768,67 @@ public:
         channel::ChannelClientConnection>& client, bool isUpdate);
 
     /**
+     * Update the player's current BP total.
+     * @param client Pointer to the client connection
+     * @param points Set or adjusted BP value to update
+     * @param isAdjust true if the point value should be added to the current
+     *  value, false if it should replace the curent value
+     */
+    bool UpdateBP(const std::shared_ptr<
+        channel::ChannelClientConnection>& client, int32_t points,
+        bool isAdjust);
+
+    /**
+     * Send the client character's current PvP information.
+     * @param client Pointer to the client connection
+     */
+    void SendPvPCharacterInfo(const std::shared_ptr<
+        channel::ChannelClientConnection>& client);
+
+    /**
+     * Update the character's bethel value for heir current Pentalpha match
+     * entry
+     * @param client Pointer to the client connection
+     * @param bethel Set or adjusted bethel value to update
+     * @param adjust true if the point value should be adjusted via tokusei
+     * @return Final point value added
+     */
+    int32_t UpdateBethel(const std::shared_ptr<
+        channel::ChannelClientConnection>& client, int32_t bethel,
+        bool adjust);
+
+    /**
+     * Update the character's cowrie and bethel values independent of a match
+     * @param client Pointer to the client connection
+     * @param cowrie Amount of cowrie to add
+     * @param bethel Amount of bethel to add to each of the 5 types
+     * @return true if the update succeeded, false if it did not
+     */
+    bool UpdateCowrieBethel(const std::shared_ptr<
+        channel::ChannelClientConnection>& client, int32_t cowrie,
+        const std::array<int32_t, 5>& bethel);
+
+    /**
+     * Send the client character's current cowrie and bethel values
+     * @param client Pointer to the client connection
+     */
+    void SendCowrieBethel(const std::shared_ptr<
+        channel::ChannelClientConnection>& client);
+
+    /**
+     * Update or create a character assigned event counter
+     * @param client Pointer to the client connection
+     * @param type Type of event to update
+     * @param value Value to add/assign to the counter
+     * @param noSync Optional parameter to update the counter but
+     *  not sync with the world. Useful for events that are not summed.
+     * @return true if the update succeeded, false if it did not
+     */
+    bool UpdateEventCounter(const std::shared_ptr<
+        channel::ChannelClientConnection>& client, int32_t type,
+        int32_t value, bool noSync = false);
+
+    /**
      * Update the client's character or demon's experience and level
      * up if the level threshold is passed.
      * @param client Pointer to the client connection
@@ -759,6 +866,26 @@ public:
         uint16_t rateBoost = 0, float multiplier = -1.0f);
 
     /**
+     * Calculate how many expertise points would be gained for a specific
+     * character, expertise and growth rate. Inactive expertise will always
+     * return 0.
+     * @param cState Pointer to the character state
+     * @param expertiseID ID of the expertise to calculate
+     * @param growthRate Growth rate to apply to the calculation, typically
+     *  from a skill's growth data
+     * @param rateBoost Optional flat value to add to the expertise
+     *  rates for the calculation (before calculating final amount)
+     * @param multiplier Expertise point multiplier, defaults to -1
+     *  to differentiate from explicitly being set to 1. If this is
+     *  not set, the character's expertise acquisition rate will be
+     *  used.
+     * @return Expertise point gain, will never be negative
+     */
+    int32_t CalculateExpertiseGain(const std::shared_ptr<CharacterState>& cState,
+        uint8_t expertiseID, float growthRate,
+        uint16_t rateBoost = 0, float multiplier = -1.0f);
+
+    /**
      * Update a client's character's expertise for a set of expertise IDs.
      * If an expertise is supplied that is not enabled it will still be
      * updated.
@@ -788,7 +915,7 @@ public:
      * @param client Pointer to the client connection containing
      *  the character
      */
-    void SendExertiseExtension(const std::shared_ptr<
+    void SendExpertiseExtension(const std::shared_ptr<
         channel::ChannelClientConnection>& client);
 
     /**
@@ -934,6 +1061,39 @@ public:
         ChannelClientConnection>& client);
 
     /**
+     * Send the client character's current Invoke event status
+     * @param client Pointer to the client connection
+     * @param force If true, send the notification whether any cooldowns
+     *  are active or not. If false, only send if a cooldown is active.
+     * @param queue true if the packet should be queued, false if it
+     *  should be sent right away
+     */
+    void SendInvokeStatus(const std::shared_ptr<
+        ChannelClientConnection>& client, bool force, bool queue = false);
+
+    /**
+     * Send post items not already "distributed" to the client and update
+     * them so they do not send a second time.
+     * @param client Pointer to the client connection
+     * @param post List of post items pending distribution
+     */
+    void NotifyItemDistribution(const std::shared_ptr<
+        ChannelClientConnection>& client,
+        std::list<std::shared_ptr<objects::PostItem>> post);
+
+    /**
+     * Update the status effects active on a demon that is not currently
+     * summoned
+     * @param demon Pointer to an unsummoned demon
+     * @param accountUID UID of the account the demon belongs to
+     * @param queueSave When true, any updates that take place will be queued
+     *  instead of saved immediately
+     * @return true if the update completed without error
+     */
+    bool UpdateStatusEffects(const std::shared_ptr<objects::Demon>& demon,
+        const libobjgen::UUID& accountUID, bool queueSave);
+
+    /**
      * Update the status effects assigned directly on a character or demon
      * entity from the current status effect states and save them to the
      * database.
@@ -1010,10 +1170,50 @@ public:
      * @param eState2 Pointer ot the secondary entity to modify. If removing
      *  and this is not supplied, all entities will be removed from the
      *  primary entity
+     * @return true if the update occurred without issue
      */
     bool AddRemoveOpponent(bool add, const std::shared_ptr<
         ActiveEntityState>& eState1, const std::shared_ptr<
         ActiveEntityState>& eState2);
+
+    /**
+     * Increase the digitalize XP points of one or more demon race for the
+     * supplied client. If the race is not unlocked yet, the unlock criteria
+     * will be checked before adding any points.
+     * @param client Pointer to the client connection
+     * @param pointMap Map of race IDs to points to add
+     * @param allowAdjust If true, tokusei effects can increase the amount of
+     *  points beinga added
+     * @param validate Optional parameter to disable checking unlock criteria
+     * @return true if an updateable digitalize race was supplied, false
+     *  if they were all invalid or not unlockable
+     */
+    bool UpdateDigitalizePoints(const std::shared_ptr<
+        channel::ChannelClientConnection>& client,
+        const std::unordered_map<uint8_t, int32_t>& pointMap,
+        bool allowAdjust, bool validate = true);
+
+    /**
+     * Enter a player character into the digitalize state using the
+     * supplied demon
+     * @param client Pointer to the client connection associated to the
+     *  character to digitalize
+     * @param demon Pointer to the digitalize target demon
+     * @return true if digitalization started, false if a failure occurred
+     */
+    bool DigitalizeStart(const std::shared_ptr<
+        channel::ChannelClientConnection>& client,
+        const std::shared_ptr<objects::Demon>& demon);
+
+    /**
+     * End the digitalize state of a player character
+     * @param client Pointer to the client connection associated to the
+     *  digitalized character
+     * @return true if digitalization ended, false if was not active or
+     *  could not be ended
+     */
+    bool DigitalizeEnd(const std::shared_ptr<
+        channel::ChannelClientConnection>& client);
 
     /**
      * Update the state of the supplied entities on the world server.
@@ -1045,6 +1245,31 @@ public:
         bool setHPMP = true);
 
     /**
+     * Retrieve a map of correct table indexes to corresponding stat values
+     * for the supplied demon definition without any adjustments
+     * @param demonData Pointer to the demon's definition
+     * @return Map of correct table indexes to corresponding stat values
+     */
+    static libcomp::EnumMap<CorrectTbl, int16_t> GetDemonBaseStats(
+        const std::shared_ptr<objects::MiDevilData>& demonData);
+
+    /**
+     * Retrieve a map of correct table indexes to corresponding stat values
+     * for the supplied demon definition adjusted for current level and growth
+     * type
+     * @param demonData Pointer to the demon's definition
+     * @param definitionManager Pointer to the definition manager to use to
+     *  retrieve growth information
+     * @param growthType Demon growth type to calculate stats for
+     * @param level Current level to calculate stats for
+     * @return Map of correct table indexes to corresponding stat values
+     */
+    static libcomp::EnumMap<CorrectTbl, int16_t> GetDemonBaseStats(
+        const std::shared_ptr<objects::MiDevilData>& demonData,
+        libcomp::DefinitionManager* definitionManager, uint8_t growthType,
+        int8_t level);
+
+    /**
      * Apply demon familiarity boost to stats
      * @param familiarity Demon's current familiarity level
      * @param stats Reference to a correct table map
@@ -1061,16 +1286,65 @@ public:
      * @param baseCalc When true, stats are being calculated to set directly on
      *  the demon. When false, stats are being calculated for when the demon is
      *  displayed as the active partner.
+     * @param readOnly If true no values will be written directly to the demon
      */
-    static void AdjustDemonBaseStats(const std::shared_ptr<objects::Demon>& demon,
-        libcomp::EnumMap<CorrectTbl, int16_t>& stats, bool baseCalc);
+    static void AdjustDemonBaseStats(const std::shared_ptr<
+        objects::Demon>& demon, libcomp::EnumMap<CorrectTbl, int16_t>& stats,
+        bool baseCalc, bool readOnly = false);
+
+    /**
+     * Adjust mitama specific stats of a demon being calculated.
+     * @param demon Pointer to the demon being calculated
+     * @param stats Reference to a correct table map
+     * @param definitionManager Pointer to the definition manager to use to
+     *  retrieve stat information
+     * @param reunionMode Adjust all reunion inreased stats (0), only base
+     *  stats (1) or only non-base stats (2)
+     * @param entityID ID of the demon entity if the one being calculated is
+     *  summoned, defaults to unsummoned
+     * @param includeSetBonuses Mitama set bonuses will be included in the
+     *  calculation if true and ignored if false
+     */
+    static void AdjustMitamaStats(const std::shared_ptr<objects::Demon>& demon,
+        libcomp::EnumMap<CorrectTbl, int16_t>& stats,
+        libcomp::DefinitionManager* definitionManager, uint8_t reunionMode,
+        int32_t entityID = 0, bool includeSetBonuses = true);
+
+    /**
+     * Get all direct and set mitama bonuses for the supplied demon
+     * @param demon Pointer to a demon
+     * @param definitionManager Pointer to the definition manager to use to
+     *  retrieve bonus information
+     * @param bonuses Output variable to store direct bonus IDs (and counts)
+     * @param setBonuses Output variable to store all active set bonuses
+     * @param excludeTokusei If true, tokusei based set bonuses will be ignored
+     * @return true if one or more bonus is active, false if no bonuses are
+     *  active
+     */
+    static bool GetMitamaBonuses(const std::shared_ptr<objects::Demon>& demon,
+        libcomp::DefinitionManager* definitionManager,
+        std::unordered_map<uint8_t, uint8_t>& bonuses,
+        std::set<uint32_t>& setBonuses, bool excludeTokusei);
+
+    /**
+     * Get all trait skill IDs on the supplied demon directly or from equipment
+     * @param demon Pointer to a demon
+     * @param demonData Pointer to the demon's definition
+     * @param definitionManager Pointer to the definition manager to use to
+     *  retrieve demon information
+     * @return Set of active trait skill IDs
+     */
+    static std::set<uint32_t> GetTraitSkills(
+        const std::shared_ptr<objects::Demon>& demon,
+        const std::shared_ptr<objects::MiDevilData>& demonData,
+        libcomp::DefinitionManager* definitionManager);
 
     /**
      * Retrieve a map of correct table indexes to corresponding stat values.
      * @param cs Pointer to the core stats of a character
      * @return Map of correct table indexes to corresponding stat values
      */
-    static libcomp::EnumMap<CorrectTbl, int16_t> GetCharacterBaseStatMap(
+    static libcomp::EnumMap<CorrectTbl, int16_t> GetCharacterBaseStats(
         const std::shared_ptr<objects::EntityStats>& cs);
 
     /**

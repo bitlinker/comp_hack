@@ -29,6 +29,7 @@
 
 // channel Includes
 #include "ActiveEntityState.h"
+#include "AllyState.h"
 #include "BazaarState.h"
 #include "ChannelClientConnection.h"
 #include "EnemyState.h"
@@ -44,14 +45,17 @@
 
 namespace objects
 {
-class ActionSpawn;
+class Action;
 class Ally;
+class DiasporaBase;
 class Loot;
 class LootBox;
+class PvPBase;
 class ServerNPC;
 class ServerObject;
 class ServerZone;
 class SpawnRestriction;
+class UBMatch;
 }
 
 namespace channel
@@ -63,9 +67,10 @@ class PlasmaState;
 class WorldClock;
 class ZoneInstance;
 
-typedef ActiveEntityStateImp<objects::Ally> AllyState;
+typedef EntityState<objects::DiasporaBase> DiasporaBaseState;
 typedef EntityState<objects::LootBox> LootBoxState;
 typedef EntityState<objects::ServerNPC> NPCState;
+typedef EntityState<objects::PvPBase> PvPBaseState;
 typedef EntityState<objects::ServerObject> ServerObjectState;
 
 typedef objects::ServerZoneInstanceVariant::InstanceType_t InstanceType_t;
@@ -78,25 +83,11 @@ class Zone : public objects::ZoneObject
 {
 public:
     /**
-     * Create a new zone. While not useful this constructor is
-     * necessary for the script bindings.
-     */
-    Zone();
-
-    /**
      * Create a new zone.
      * @param id Unique server ID of the zone
      * @param definition Pointer to the ServerZone definition
      */
     Zone(uint32_t id, const std::shared_ptr<objects::ServerZone>& definition);
-
-    /**
-     * Explicitly defined copy constructor necessary due to removal
-     * of implicit constructor from non-copyable mutex member. This should
-     * never actually be used.
-     * @param other The other zone to copy
-     */
-    Zone(const Zone& other);
 
     /**
      * Clean up the zone.
@@ -108,6 +99,19 @@ public:
      * @return Defintion ID of the zone
      */
     uint32_t GetDefinitionID();
+
+    /**
+     * Get the defintion dynamic map ID of the zone
+     * @return Defintion dynamic map ID of the zone
+     */
+    uint32_t GetDynamicMapID();
+
+    /**
+     * Get the assigned instance ID of the zone or zero if it is not part of
+     * an instance
+     * @return Instance ID of the zone
+     */
+    uint32_t GetInstanceID();
 
     /**
      * Get the geometry information bound to the zone
@@ -158,6 +162,13 @@ public:
     bool HasRespawns() const;
 
     /**
+     * Check if the zone has staggered spawns ready
+     * @param now System time representing the current server time
+     * @return true if the zone has staggered spawns ready
+     */
+    bool HasStaggeredSpawns(uint64_t now);
+
+    /**
      * Add a client connection to the zone and register its world CID
      * @param client Pointer to a client connection to add
      * @return true if the connection was added without error
@@ -183,8 +194,17 @@ public:
     /**
      * Add an ally to the zone
      * @param ally Pointer to the ally to add
+     * @param staggerTime Optional server time specifying when the ally
+     *  should be spawned into the zone. If 0, it will spawn immediately.
      */
-    void AddAlly(const std::shared_ptr<AllyState>& ally);
+    void AddAlly(const std::shared_ptr<AllyState>& ally,
+        uint64_t staggerTime = 0);
+
+    /**
+     * Add a special zone base base to the zone
+     * @param base Pointer to the base to add
+     */
+    void AddBase(const std::shared_ptr<objects::EntityStateObject>& base);
 
     /**
      * Add a bazaar to the zone
@@ -202,8 +222,11 @@ public:
     /**
      * Add an enemy to the zone
      * @param enemy Pointer to the enemy to add
+     * @param staggerTime Optional server time specifying when the enemy
+     *  should be spawned into the zone. If 0, it will spawn immediately.
      */
-    void AddEnemy(const std::shared_ptr<EnemyState>& enemy);
+    void AddEnemy(const std::shared_ptr<EnemyState>& enemy,
+        uint64_t staggerTime = 0);
 
     /**
      * Add a loot body to the zone
@@ -317,6 +340,19 @@ public:
         std::shared_ptr<CultureMachineState>> GetCultureMachines() const;
 
     /**
+     * Get a Diaspora base instance by it's ID.
+     * @param id Instance ID of the Diaspora base.
+     * @return Pointer to the Diaspora base instance.
+     */
+    std::shared_ptr<DiasporaBaseState> GetDiasporaBase(int32_t id);
+
+    /**
+     * Get all Diaspora base instances in the zone
+     * @return List of all Diaspora base instances in the zone
+     */
+    const std::list<std::shared_ptr<DiasporaBaseState>> GetDiasporaBases() const;
+
+    /**
      * Get an entity instance with a specified actor ID.
      * @param actorID Actor ID of the entity.
      * @return Pointer to the entity instance.
@@ -335,6 +371,12 @@ public:
      * @return List of all enemy instances in the zone
      */
     const std::list<std::shared_ptr<EnemyState>> GetEnemies() const;
+
+    /**
+     * Get all boss enemy instances in the zone
+     * @return List of all boss enemy instances in the zone
+     */
+    const std::list<std::shared_ptr<EnemyState>> GetBosses();
 
     /**
      * Get a loot box instance by it's ID.
@@ -358,6 +400,29 @@ public:
      * @return true if the box was claimed, false if it was not
      */
     bool ClaimBossBox(int32_t id, int32_t looterID);
+
+    /**
+     * Update the occupier (or owner) information of a PvP base in the zone
+     * @param baseID Entity ID of the base in the zone
+     * @param occupierID Entity ID of the occupier (or owner)
+     * @param complete true if the occupier is canceling the request or
+     *  has occupied it long enough to become the owner, false if the base
+     *  occupation should start
+     * @param occupyStartTime Optional parameter that needs to be specified
+     *  when attempting to complete the occupation
+     * @return Error code resulting from an invalid request or 0 upon success
+     */
+    int32_t OccupyPvPBase(int32_t baseID, int32_t occupierID, bool complete,
+        uint64_t occupyStartTime = 0);
+
+    /**
+     * Update the bonus count on a PvP base
+     * @param baseID Entity ID of the base in the zone
+     * @param occupyStartTime Server timestamp of when the base was occupied.
+     *  If this time does not match, the bonus will not update.
+     * @return New bonus count or 0 if it did not update
+     */
+    uint16_t IncreasePvPBaseBonus(int32_t baseID, uint64_t occupyStartTime);
 
     /**
      * Get an NPC instance by it's ID.
@@ -385,6 +450,19 @@ public:
      */
     const std::unordered_map<uint32_t,
         std::shared_ptr<PlasmaState>> GetPlasma() const;
+
+    /**
+     * Get a PvP base instance by it's ID.
+     * @param id Instance ID of the PvP base.
+     * @return Pointer to the PvP base instance.
+     */
+    std::shared_ptr<PvPBaseState> GetPvPBase(int32_t id);
+
+    /**
+     * Get all PvP base instances in the zone
+     * @return List of all PvP base instances in the zone
+     */
+    const std::list<std::shared_ptr<PvPBaseState>> GetPvPBases() const;
 
     /**
      * Get an object instance by it's ID.
@@ -437,28 +515,30 @@ public:
 
     /**
      * Create an encounter from a group of entities and register them with
-     * the zone. Encounter information will be retained until a check via
+     * the zone. DefeatActions will be retained until a check via
      * EncounterDefeated is called.
      * @param entities List of the entities to add to the encounter
-     * @param spawnSource Optional pointer to spawn action that created the
-     *  encounter. If this is specified, it will be returned as the
-     *  defeatActionSource when calling EncounterDefeated
+     * @param staggerSpawn If true spawns will appear with a spawn stagger,
+     *  if false  they will all appear at once
+     * @param defeatActions Optional list of defeat actions associted with
+     *  the encounter. These actions will be returned when calling
+     *  EncounterDefeated
      */
     void CreateEncounter(const std::list<std::shared_ptr<
-        ActiveEntityState>>& entities,
-        std::shared_ptr<objects::ActionSpawn> spawnSource = nullptr);
+        ActiveEntityState>>& entities, bool staggerSpawn,
+        const std::list<std::shared_ptr<objects::Action>>& defeatActions);
 
     /**
      * Determine if an entity encounter has been defeated and clean up the
      * encounter information for the zone.
      * @param encounterID ID of the encounter
-     * @param defeatActionSource Output parameter to contain the original
-     *  spawn action source that can contain defeat actions to execute
+     * @param defeatActions Output parameter to contain the encounter's
+     *  defeat actions to fire if the encounter is defeated
      * @return true if the encounter has been defeated, false if at least
      *  one entity from the group is still alive
      */
     bool EncounterDefeated(uint32_t encounterID,
-        std::shared_ptr<objects::ActionSpawn>& defeatActionSource);
+        std::list<std::shared_ptr<objects::Action>>& defeatActions);
 
     /**
      * Get the IDs of all entities in the zone marked for despawn.
@@ -491,16 +571,15 @@ public:
     bool UpdateTimedSpawns(const WorldClock& clock, bool initializing = false);
 
     /**
-     * Enable or disable the supplied spawn groups and also disable (or enable)
-     * any spawn location groups that now have all groups disabled (or one enabled)
-     * @param spawnGroupIDs Set of spawn group IDs to adjust
+     * Enable or disable the supplied spawn group and also disable (or enable)
+     * any affected spawn location groups
+     * @param spawnGroupID Spawn group ID to adjust
      * @param enable true if the group should be enabled, false if it should
      *  be disabled
      * @return true if any updates were performed that the zone manager needs
      *  to react to, false if none occurred or they can be processed later
      */
-    bool EnableDisableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-        bool enable);
+    bool EnableDisableSpawnGroup(uint32_t spawnGroupID, bool enable);
 
     /**
      * Get the set of spawn location groups that need to be respawned.
@@ -508,6 +587,27 @@ public:
      * @return Set of spawn location group IDs to respawn
      */
     std::set<uint32_t> GetRespawnLocations(uint64_t now);
+
+    /**
+     * Get enemies or allies that should spawn past the supplied server time.
+     * @param now System time representing the current server time
+     * @return List of enemies or allies to spawn
+     */
+    std::list<std::shared_ptr<ActiveEntityState>>
+        UpdateStaggeredSpawns(uint64_t now);
+
+    /**
+     * Add or remove the supplied entity as a combatant in the zone. If
+     * the entity belongs to a player, both the character and demon will
+     * be added.
+     * @param entityID ID of the entity starting or stopping combat
+     * @param timeout Server time for when combat will end or 0 for ending now
+     * @param checkBefore If true the timestamp will be used to check if the
+     *  entity can end combat at that time and no values will be changed.
+     * @return Pointer to the entity if it was in the opposite state
+     */
+    std::shared_ptr<ActiveEntityState> StartStopCombat(int32_t entityID,
+        uint64_t timeout, bool checkBefore = false);
 
     /**
      * Get the state of a zone flag.
@@ -575,6 +675,36 @@ public:
             size_t freeSlots, std::unordered_map<uint32_t, uint16_t> stacksFree = {});
 
     /**
+     * Get the set of all player action types restricted by uncaptured bases
+     * in the zone
+     * @return Set of restricted action types (and -1 for all items which is
+     *  not an action type)
+     */
+    std::set<int8_t> GetBaseRestrictedActionTypes();
+
+    /**
+     * Get the number of living Diaspora base bound miniboss spawn location
+     * group encounters and maximum count for the phase
+     * @return Number of living mini-boss encounters and maximum count for the
+     *  current phase
+     */
+    std::pair<uint8_t, uint8_t> GetDiasporaMiniBossCount();
+
+    /**
+     * Determine if the Diaspora mini-bosses for this zone have updated since
+     * the last time this function has been called. Reset the flag if one has
+     * occurred.
+     * @return true if and update has occurred, false one has not
+     */
+    bool DiasporaMiniBossUpdated();
+
+    /**
+     * Get the current UBMatch associated to the zone if one exists
+     * @return Pointer to the UBMatch or null if none exists
+     */
+    std::shared_ptr<objects::UBMatch> GetUBMatch() const;
+
+    /**
      * Get the next entity rental expiration in system time
      * @return Next entity rental expiration in system time
      */
@@ -616,6 +746,17 @@ public:
      */
     void Cleanup();
 
+    /**
+     * Determine based on the supplied clock time if a spawn restriction
+     * is active or not
+     * @param clock World clock set to the current time
+     * @param restriction Pointer to the spawn restriction to evaluate
+     * @return true if the current time is valid for the restriction,
+     *  false if it is not
+     */
+    static bool TimeRestrictionActive(const WorldClock& clock,
+        const std::shared_ptr<objects::SpawnRestriction>& restriction);
+
 private:
     /**
      * Register an entity as one that currently exists in the zone
@@ -628,17 +769,6 @@ private:
      * @param entityID ID of an entity to remove
      */
     void UnregisterEntityState(int32_t entityID);
-
-    /**
-     * Determine based on the supplied clock time if a spawn restriction
-     * is active or not
-     * @param clock World clock set to the current time
-     * @param restriction Pointer to the spawn restriction to evaluate
-     * @return true if the current time is valid for the restriction,
-     *  false if it is not
-     */
-    bool TimeRestrictionActive(const WorldClock& clock,
-        const std::shared_ptr<objects::SpawnRestriction>& restriction);
 
     /**
      * Register a new spawned entity to the zone stored spots and group field
@@ -655,25 +785,32 @@ private:
      * that previously had all groups disabled
      * @param spawnGroupIDs Set of spawn group IDs to enable
      * @param initializing true if the zone is being setup, defaults to false
+     * @param activate If false and the group is deactivated, it will not be
+     *  re-enabled. If true, the group will be re-enabled no matter what.
      */
     void EnableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-        bool initializing);
+        bool initializing, bool activate);
 
     /**
      * Disable a set of spawn groups and update any spawn location groups
      * that now have all groups disabled
      * @param spawnGroupIDs Set of spawn group IDs to disable
      * @param initializing true if the zone is being setup, defaults to false
+     * @param deactivate If true the group will be deactivated as well and
+     *  cannot be re-enabled until it is reactivated
      * @return true if any enemies must be despawned after being disabled
      */
     bool DisableSpawnGroups(const std::set<uint32_t>& spawnGroupIDs,
-        bool initializing);
+        bool initializing, bool deactivate);
 
     /// Map of world CIDs to client connections
     std::unordered_map<int32_t, std::shared_ptr<ChannelClientConnection>> mConnections;
 
     /// List of pointers to allies instantiated for the zone
     std::list<std::shared_ptr<AllyState>> mAllies;
+
+    /// List of pointers to special zone bases instantiated for the zone
+    std::list<std::shared_ptr<objects::EntityStateObject>> mBases;
 
     /// List of pointers to bazaars instantiated for the zone
     std::list<std::shared_ptr<BazaarState>> mBazaars;
@@ -699,9 +836,9 @@ private:
     std::unordered_map<uint32_t,
         std::set<std::shared_ptr<ActiveEntityState>>> mEncounters;
 
-    /// Map of encounter IDs to spawn actions that created the encounter
+    /// Map of encounter IDs to defeat actions assigned when they were created
     std::unordered_map<uint32_t,
-        std::shared_ptr<objects::ActionSpawn>> mEncounterSpawnSources;
+        std::list<std::shared_ptr<objects::Action>>> mEncounterDefeatActions;
 
     /// Set of all spot IDs that have had an enemy spawned
     std::set<uint32_t> mSpotsSpawned;
@@ -721,6 +858,9 @@ private:
     /// Map of boss box group IDs to entities that have claimed part of the group
     std::unordered_map<uint32_t, std::set<int32_t>> mBossBoxOwners;
 
+    /// Set of all entity IDs for bosses in the zone
+    std::set<int32_t> mBossIDs;
+
     /// Map of plasma states by definition ID
     std::unordered_map<uint32_t, std::shared_ptr<PlasmaState>> mPlasma;
 
@@ -739,12 +879,21 @@ private:
     /// at that time
     std::map<uint64_t, std::set<uint32_t>> mRespawnTimes;
 
+    /// Map of server times to enemies or allies that exist in the zone but will not
+    /// actually spawn until the time passes
+    std::map<uint64_t,
+        std::list<std::shared_ptr<ActiveEntityState>>> mStaggeredSpawns;
+
     /// Set of entity IDs waiting to despawn. IDs are removed from this set when
     /// the entity is removed from the zone.
     std::set<int32_t> mPendingDespawnEntities;
 
     /// Set of spawn group IDs that have been disabled
     std::set<uint32_t> mDisabledSpawnGroups;
+
+    /// Set of spawn group IDs that have been deactivated and will not re-enable
+    /// until they have been activated again.
+    std::set<uint32_t> mDeactivatedSpawnGroups;
 
     /// Set of spawn location group IDs where all associated groups are disabled
     std::set<uint32_t> mDisabledSpawnLocationGroups;
@@ -770,6 +919,10 @@ private:
 
     /// Quick reference flag to determine if the zone has respwa
     bool mHasRespawns;
+
+    /// Flag indicating that Diaspora mini-boss spawn location groups have
+    /// updated since the last call to DiasporaMiniBossUpdated
+    bool mDiasporaMiniBossUpdated;
 
     /// Server lock for shared resources
     std::mutex mLock;

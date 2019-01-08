@@ -141,8 +141,7 @@ bool Parsers::DemonForce::Parse(libcomp::ManagerPacket *pPacketManager,
             }
         }
 
-        /// @todo: check increased stack slots from mitama
-        if(toStack &&
+        if(toStack && demon->GetForceStack((size_t)stackSlot) == 0 &&
             devilData->GetGrowth()->GetForceStack() < (stackSlot + 1))
         {
             success = false;
@@ -186,6 +185,9 @@ bool Parsers::DemonForce::Parse(libcomp::ManagerPacket *pPacketManager,
         // As long as a force stack effect is set or a value is raised, the
         // force operation has succeeded
         bool resultExists = false;
+
+        // Items typically apply normal caps, cap at 1000 points just in case
+        const int32_t rMax = 100000000;
         for(auto result : dfData->GetResults())
         {
             // Make sure its a value effect index
@@ -194,7 +196,6 @@ bool Parsers::DemonForce::Parse(libcomp::ManagerPacket *pPacketManager,
             {
                 // Check requirements and max values
                 int32_t points = demon->GetForceValues((size_t)rType);
-                int32_t rMax = (int32_t)libcomp::DEMON_FORCE_MAX[(size_t)rType] * 100000;
                 if(points < rMax &&
                     (result->GetMinPoints() < 0 || result->GetMinPoints() <= points) &&
                     (result->GetMaxPoints() < 0 || result->GetMaxPoints() >= points))

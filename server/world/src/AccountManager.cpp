@@ -35,6 +35,7 @@
 // object Includes
 #include <Account.h>
 #include <AccountWorldData.h>
+#include <ChannelLogin.h>
 #include <Character.h>
 #include <CharacterLogin.h>
 #include <CharacterProgress.h>
@@ -48,10 +49,12 @@
 #include <InheritedSkill.h>
 #include <Item.h>
 #include <ItemBox.h>
+#include <PvPData.h>
 #include <Quest.h>
 #include <StatusEffect.h>
 #include <WebGameSession.h>
 #include <WorldConfig.h>
+#include <WorldSharedConfig.h>
 
 // world Includes
 #include "AccountManager.h"
@@ -117,7 +120,7 @@ bool AccountManager::ChannelLogin(std::shared_ptr<objects::AccountLogin> login)
 
     auto cLogin = login->GetCharacterLogin();
     auto character = cLogin->GetCharacter().Get();
-    auto account = login->LoadAccount(worldDB);
+    auto account = login->LoadAccount(lobbyDB);
 
     if(!character || !account)
     {
@@ -130,20 +133,31 @@ bool AccountManager::ChannelLogin(std::shared_ptr<objects::AccountLogin> login)
     auto worldChanges = libcomp::DatabaseChangeSet::Create();
 
     uint32_t lastLogin = character->GetLastLogin();
-    auto now = std::time(0);
 
-    // Get the beginning of today (UTC)
-    std::tm localTime = *std::localtime(&now);
-    localTime.tm_hour = 0;
-    localTime.tm_min = 0;
-    localTime.tm_sec = 0;
+    // Get the relative day offset
+    const static int32_t timeAdjust = (std::dynamic_pointer_cast<
+        objects::WorldConfig>(server->GetConfig())->GetWorldSharedConfig()
+        ->GetTimeOffset() * 60) % 86400;
 
-    uint32_t today = (uint32_t)std::mktime(&localTime);
+    // Get the relative beginning of today
+    time_t now = std::time(0);
+    uint32_t today = (uint32_t)((now / 86400 * 86400) - timeAdjust);
+    if(today > now)
+    {
+        // Adjusted time is still a day behind GMT
+        today = (uint32_t)(today - 86400);
+    }
+
     if(lastLogin && today > lastLogin)
     {
         // This is the character's first login of the day, increase
-        // their login points and mark COMP demons with quests
+        // their login points, mark COMP demons with quests and drop GP
         auto stats = character->LoadCoreStats(worldDB);
+        auto sharedConfig = std::dynamic_pointer_cast<
+            objects::WorldConfig>(server->GetConfig())->GetWorldSharedConfig();
+
+        // Count any time before today as one day
+        uint32_t daysSinceLogin = ((today - lastLogin) / (24 * 60 * 60)) + 1;
 
         if(!character->GetCOMP().IsNull())
         {
@@ -182,23 +196,47 @@ bool AccountManager::ChannelLogin(std::shared_ptr<objects::AccountLogin> login)
             worldChanges->Update(progress);
         }
 
+        int32_t gpLoss = (int32_t)sharedConfig->GetDailyGPLoss();
+        if(gpLoss)
+        {
+            // A set number of points is lost every day
+            gpLoss = gpLoss * (int32_t)daysSinceLogin;
+
+            auto pvpData = character->LoadPvPData(worldDB);
+            if(pvpData)
+            {
+                int32_t gp = pvpData->GetGP();
+                if(gp > 0)
+                {
+                    pvpData->SetGP(gp < gpLoss ? 0 : (gp - gpLoss));
+                    worldChanges->Update(pvpData);
+                }
+            }
+        }
+
         if(stats->GetLevel() > 0)
         {
             int32_t points = character->GetLoginPoints();
-            points = points + (int32_t)ceil((float)stats->GetLevel() * 0.2);
-            character->SetLoginPoints(points);
+            points = points + (int32_t)ceil((float)stats->GetLevel() * 0.2 *
+                (1.f + sharedConfig->GetLoginPointBonus()));
 
-            // If the character is in a clan, queue up a recalculation of
-            // the clan level and sending of the character updates
-            if(cLogin->GetClanID())
+            if(points > character->GetLoginPoints())
             {
-                server->QueueWork([](std::shared_ptr<WorldServer> pServer,
-                    std::shared_ptr<objects::CharacterLogin> pLogin, int32_t pClanID)
+                character->SetLoginPoints(points);
+
+                // If the character is in a clan, queue up a recalculation of
+                // the clan level and sending of the character updates
+                if(cLogin->GetClanID())
                 {
-                    auto characterManager = pServer->GetCharacterManager();
-                    characterManager->SendClanMemberInfo(pLogin);
-                    characterManager->RecalculateClanLevel(pClanID);
-                }, server, cLogin, cLogin->GetClanID());
+                    server->QueueWork([](std::shared_ptr<WorldServer> pServer,
+                        std::shared_ptr<objects::CharacterLogin> pLogin,
+                        int32_t pClanID)
+                    {
+                        auto characterManager = pServer->GetCharacterManager();
+                        characterManager->SendClanMemberInfo(pLogin);
+                        characterManager->RecalculateClanLevel(pClanID);
+                    }, server, cLogin, cLogin->GetClanID());
+                }
             }
         }
     }
@@ -224,11 +262,14 @@ bool AccountManager::ChannelLogin(std::shared_ptr<objects::AccountLogin> login)
     cLogin->SetWorldID((int8_t)server->GetRegisteredWorld()->GetID());
     cLogin->SetStatus(objects::CharacterLogin::Status_t::ONLINE);
 
+    server->GetWorldSyncManager()->SyncRecordUpdate(cLogin, "CharacterLogin");
+
     return true;
 }
 
-bool AccountManager::SwitchChannel(std::shared_ptr<
-    objects::AccountLogin> login, int8_t channelID)
+bool AccountManager::SwitchChannel(
+    std::shared_ptr<objects::AccountLogin> login,
+    const std::shared_ptr<objects::ChannelLogin>& switchDef)
 {
     auto username = login->GetAccount()->GetUsername();
 
@@ -241,12 +282,16 @@ bool AccountManager::SwitchChannel(std::shared_ptr<
         return false;
     }
 
-    PushChannelSwitch(username, channelID);
+    PushChannelSwitch(username, switchDef);
 
+    auto server = mServer.lock();
     auto cLogin = login->GetCharacterLogin();
 
     // Mark the expected location for when the connection returns
-    cLogin->SetChannelID(channelID);
+    cLogin->SetChannelID(switchDef->GetToChannel());
+    cLogin->SetZoneID(0);
+
+    server->GetWorldSyncManager()->SyncRecordUpdate(cLogin, "CharacterLogin");
 
     // Set the session key now but only update the lobby if the channel
     // switch actually occurs
@@ -256,7 +301,6 @@ bool AccountManager::SwitchChannel(std::shared_ptr<
     // so the timeout can occur
     login->SetState(objects::AccountLogin::State_t::CHANNEL_TO_CHANNEL);
 
-    auto server = mServer.lock();
     auto config = std::dynamic_pointer_cast<objects::WorldConfig>(
         server->GetConfig());
 
@@ -285,8 +329,6 @@ std::shared_ptr<objects::AccountLogin> AccountManager::GetUserLogin(
 std::shared_ptr<objects::AccountLogin> AccountManager::LogoutUser(
     const libcomp::String& username, int8_t channel)
 {
-    LOG_DEBUG(libcomp::String("Logging out user: '%1'\n").Arg(username));
-
     std::shared_ptr<objects::AccountLogin> result;
 
     libcomp::String lookup = username.ToLower();
@@ -297,6 +339,8 @@ std::shared_ptr<objects::AccountLogin> AccountManager::LogoutUser(
     if (mAccountMap.end() != pair && (channel == -1 ||
         channel == pair->second->GetCharacterLogin()->GetChannelID()))
     {
+        LOG_DEBUG(libcomp::String("Logging out user: '%1'\n").Arg(username));
+
         result = pair->second;
         Cleanup(result);
         mAccountMap.erase(pair);
@@ -310,8 +354,9 @@ std::shared_ptr<objects::AccountLogin> AccountManager::LogoutUser(
             auto characterManager = server->GetCharacterManager();
             auto syncManager = server->GetWorldSyncManager();
 
-            characterManager->PartyLeave(cLogin, nullptr, true);
-            syncManager->CleanUpCharacterLogin(cLogin->GetWorldCID());
+            characterManager->PartyLeave(cLogin, nullptr);
+            characterManager->TeamLeave(cLogin);
+            syncManager->CleanUpCharacterLogin(cLogin->GetWorldCID(), true);
 
             // Notify existing players
             std::list<std::shared_ptr<objects::CharacterLogin>> cLogOuts;
@@ -407,18 +452,339 @@ std::list<std::shared_ptr<objects::AccountLogin>>
     return loggedOut;
 }
 
+void AccountManager::HandleLobbyLogin(
+    const std::shared_ptr<objects::AccountLogin>& login)
+{
+    auto server = mServer.lock();
+    auto config = std::dynamic_pointer_cast<objects::WorldConfig>(
+        server->GetConfig());
+
+    if(config->GetWorldSharedConfig()->ChannelDistributionCount())
+    {
+        // Dedicated channels exist, validate location with primary channel
+        libcomp::Packet p;
+        p.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGIN);
+
+        auto primaryChannel = server->GetChannelConnectionByID(0);
+        if(primaryChannel)
+        {
+            p.WriteS8(2);   // Requesting login info
+            login->SavePacket(p, false);
+
+            primaryChannel->SendPacket(p);
+        }
+        else
+        {
+            // No primary channel, return failure
+            auto account = login->GetAccount().Get(server
+                ->GetLobbyDatabase());
+
+            p.WriteS8(0);
+            if(account)
+            {
+                p.WriteString16Little(libcomp::Convert::ENCODING_UTF8,
+                    account->GetUsername(), true);
+            }
+
+            server->GetLobbyConnection()->SendPacket(p);
+        }
+    }
+    else
+    {
+        // No dedicated channels, login now
+        CompleteLobbyLogin(login);
+    }
+}
+
+void AccountManager::CompleteLobbyLogin(
+    const std::shared_ptr<objects::AccountLogin>& login,
+    const std::shared_ptr<objects::ChannelLogin>& channelLogin)
+{
+    bool ok = true;
+
+    auto cLogin = login->GetCharacterLogin();
+
+    auto server = mServer.lock();
+    auto lobbyDB = server->GetLobbyDatabase();
+    auto worldDB = server->GetWorldDatabase();
+    auto account = login->GetAccount().Get(lobbyDB, true);
+
+    if(!account)
+    {
+        LOG_ERROR(libcomp::String("Invalid account sent to world"
+            " AccountLogin: %1\n").Arg(
+            login->GetAccount().GetUUID().ToString()));
+
+        ok = false;
+    }
+    else
+    {
+        auto cUUID = cLogin->GetCharacter().GetUUID();
+
+        if(cUUID.IsNull() || !cLogin->GetCharacter().Get(worldDB, true))
+        {
+            LOG_ERROR(libcomp::String("Character UUID '%1' is not valid"
+                " for this world.\n").Arg(cUUID.ToString()));
+
+            ok = false;
+        }
+    }
+
+    auto config = std::dynamic_pointer_cast<objects::WorldConfig>(
+        server->GetConfig());
+    auto characterManager = server->GetCharacterManager();
+
+    uint8_t worldID = 0;
+    int8_t channelID = -1;
+    if(channelLogin)
+    {
+        channelID = channelLogin->GetToChannel();
+    }
+    else
+    {
+        // Always start in channel 0 for redundant channel mode or
+        // only one channel
+        channelID = 0;
+    }
+
+    ok &= channelID >= 0 &&
+        server->GetChannelConnectionByID(channelID) != nullptr;
+    if(ok)
+    {
+        // Remove any channel switches stored for whatever reason
+        PopChannelSwitch(account->GetUsername());
+
+        // Login now to get the session key
+        if(!LobbyLogin(login))
+        {
+            LOG_ERROR(libcomp::String("Failed to login character '%1'. "
+                "Here is the state of the login object now: %2\n").Arg(
+                account->GetUsername()).Arg(login->GetXml()));
+            ok = false;
+        }
+    }
+
+    if(ok)
+    {
+        worldID = config->GetID();
+
+        // Get the cached character login or register a new one
+        cLogin = characterManager->RegisterCharacter(cLogin);
+
+        auto character = cLogin->GetCharacter().Get();
+        if(!character->GetClan().IsNull())
+        {
+            // Load the clan
+            auto clan = character->GetClan().Get();
+            if(!clan)
+            {
+                clan = libcomp::PersistentObject::LoadObjectByUUID<
+                    objects::Clan>(worldDB, character->GetClan().GetUUID());
+            }
+
+            if(clan)
+            {
+                // Load the members and store in the CharacterManager
+                auto members = objects::ClanMember::LoadClanMemberListByClan(
+                    worldDB, clan->GetUUID());
+                auto clanInfo = characterManager->GetClan(clan->GetUUID());
+                if(clanInfo)
+                {
+                    cLogin->SetClanID(clanInfo->GetID());
+                }
+                else
+                {
+                    ok = false;
+                }
+            }
+            else
+            {
+                ok = false;
+            }
+        }
+
+        // If the character is already logged in somehow, send a
+        // disconnect request (should cover dead connections)
+        characterManager->RequestChannelDisconnect(cLogin->GetWorldCID());
+    }
+
+    libcomp::Packet reply;
+    reply.WritePacketCode(InternalPacketCode_t::PACKET_ACCOUNT_LOGIN);
+
+    if(ok)
+    {
+        reply.WriteS8(1); // Success
+
+        cLogin->SetWorldID((int8_t)worldID);
+        cLogin->SetChannelID(channelID);
+
+        // Check if they were part of a party that was disbanded
+        if(cLogin->GetPartyID() &&
+            !characterManager->GetParty(cLogin->GetPartyID()))
+        {
+            cLogin->SetPartyID(0);
+        }
+
+        login->SetCharacterLogin(cLogin);
+        login->SavePacket(reply, false);
+
+        LOG_DEBUG(libcomp::String("Logging in account '%1' with session key"
+            " %2\n").Arg(account->GetUsername()).Arg(login->GetSessionKey()));
+
+        // Schedule channel login timeout
+        server->GetTimerManager()->ScheduleEventIn(static_cast<int>(
+            config->GetChannelConnectionTimeOut()), [server]
+            (const std::shared_ptr<WorldServer> pServer,
+             const libcomp::String& pUsername, uint32_t pKey)
+        {
+            pServer->GetAccountManager()->ExpireSession(pUsername, pKey);
+        }, server, account->GetUsername(), login->GetSessionKey());
+    }
+    else
+    {
+        // Faiure, send the username back to disconnect
+        reply.WriteS8(0);
+        if(account)
+        {
+            reply.WriteString16Little(libcomp::Convert::ENCODING_UTF8,
+                account->GetUsername(), true);
+        }
+    }
+
+    server->GetLobbyConnection()->SendPacket(reply);
+}
+
+void AccountManager::HandleChannelLogin(
+    const std::shared_ptr<libcomp::InternalConnection>& requestConnection,
+    uint32_t sessionKey, const libcomp::String& username)
+{
+    bool ok = true;
+
+    auto server = mServer.lock();
+    auto channel = server->GetChannel(requestConnection);
+    auto login = GetUserLogin(username);
+    auto cLogin = login != nullptr ? login->GetCharacterLogin() : nullptr;
+    if(nullptr == channel)
+    {
+        LOG_ERROR("AccountLogin request received"
+            " from a connection not belonging to the lobby or any"
+            " connected channel.\n");
+        return;
+    }
+    else if(username.Length() == 0)
+    {
+        LOG_ERROR("No username passed to AccountLogin from the channel.\n");
+        return;
+    }
+    else if(nullptr == login)
+    {
+        LOG_ERROR(libcomp::String("Account with username '%1'"
+            " is not logged in to this world or has an expired session.\n")
+            .Arg(username));
+        ok = false;
+    }
+    else if(nullptr == cLogin)
+    {
+        LOG_ERROR(libcomp::String("Account with username '%1'"
+            " is not logged in to this world (bad cLogin).\n").Arg(username));
+        ok = false;
+    }
+    else if(channel->GetID() != (uint8_t)cLogin->GetChannelID())
+    {
+        LOG_ERROR("AccountLogin request received from a channel"
+            " not matching the account's current login information.\n");
+        ok = false;
+    }
+    else if(login->GetSessionKey() != sessionKey)
+    {
+        LOG_ERROR(libcomp::String("Invalid session key provided for"
+            " account with username '%1': Expected %2, found %3\n")
+            .Arg(username).Arg(login->GetSessionKey()).Arg(sessionKey));
+        ok = false;
+    }
+
+    libcomp::Packet reply;
+    reply.WritePacketCode(
+        InternalPacketCode_t::PACKET_ACCOUNT_LOGIN);
+
+    if(ok)
+    {
+        if(ChannelLogin(login))
+        {
+            reply.WriteS8(1); // Normal success
+
+            // Update the lobby with the new connection info
+            libcomp::Packet lobbyMessage;
+            lobbyMessage.WritePacketCode(
+                InternalPacketCode_t::PACKET_ACCOUNT_LOGIN);
+            lobbyMessage.WriteS8(1);    // Success
+            login->SavePacket(lobbyMessage, false);
+
+            server->GetLobbyConnection()->SendPacket(lobbyMessage);
+
+            login->SavePacket(reply, false);
+
+            // If a channel login exists, write it too
+            auto switchDef = PopChannelSwitch(username);
+            reply.WriteU8(switchDef ? 1 : 0);
+            if(switchDef)
+            {
+                switchDef->SavePacket(reply);
+            }
+        }
+        else
+        {
+            ok = false;
+        }
+    }
+
+    if(!ok)
+    {
+        // Faiure, send the username back to disconnect
+        reply.WriteS8(0);
+        reply.WriteString16Little(libcomp::Convert::ENCODING_UTF8,
+            username, true);
+    }
+
+    requestConnection->SendPacket(reply);
+
+    /*if(ok)
+    {
+        // Send party/team info if still in either
+        if(cLogin->GetPartyID())
+        {
+            auto characterManager = server->GetCharacterManager();
+            auto member = characterManager->GetPartyMember(cLogin
+                ->GetWorldCID());
+            if(member)
+            {
+                characterManager->SendPartyMember(member, cLogin->GetPartyID(),
+                    false, true, requestConnection);
+            }
+        }
+
+        if(cLogin->GetTeamID())
+        {
+            server->GetCharacterManager()->SendTeamInfo(cLogin->GetTeamID(),
+                { cLogin->GetWorldCID() });
+        }
+    }*/
+}
+
 void AccountManager::UpdateSessionKey(std::shared_ptr<objects::AccountLogin> login)
 {
     login->SetSessionKey(RNG(uint32_t, 1, (uint32_t)0x7FFFFFFF));
 }
 
-void AccountManager::PushChannelSwitch(const libcomp::String& username, int8_t channel)
+void AccountManager::PushChannelSwitch(const libcomp::String& username,
+    const std::shared_ptr<objects::ChannelLogin>& switchDef)
 {
     libcomp::String lookup = username.ToLower();
-    mChannelSwitches[lookup] = channel;
+    mChannelSwitches[lookup] = switchDef;
 }
 
-bool AccountManager::PopChannelSwitch(const libcomp::String& username, int8_t& channel)
+bool AccountManager::ChannelSwitchPending(const libcomp::String& username,
+    int8_t& channel)
 {
     libcomp::String lookup = username.ToLower();
     std::lock_guard<std::mutex> lock(mLock);
@@ -426,12 +792,28 @@ bool AccountManager::PopChannelSwitch(const libcomp::String& username, int8_t& c
     auto it = mChannelSwitches.find(lookup);
     if(it != mChannelSwitches.end())
     {
-        channel = it->second;
-        mChannelSwitches.erase(it);
+        channel = it->second->GetToChannel();
         return true;
     }
 
     return false;
+}
+
+std::shared_ptr<objects::ChannelLogin> AccountManager::PopChannelSwitch(
+    const libcomp::String& username)
+{
+    libcomp::String lookup = username.ToLower();
+    std::lock_guard<std::mutex> lock(mLock);
+
+    auto it = mChannelSwitches.find(lookup);
+    if(it != mChannelSwitches.end())
+    {
+        auto login = it->second;
+        mChannelSwitches.erase(it);
+        return login;
+    }
+
+    return nullptr;
 }
 
 void AccountManager::CleanupAccountWorldData()
@@ -538,8 +920,7 @@ bool AccountManager::DeleteCharacter(const std::shared_ptr<
             if(clanInfo)
             {
                 clanID = clanInfo->GetID();
-                characterManager->ClanLeave(cLogin, clanID, nullptr);
-                left = true;
+                left = characterManager->ClanLeave(cLogin, clanID, nullptr);
             }
         }
 
@@ -863,5 +1244,7 @@ void AccountManager::Cleanup(const std::shared_ptr<objects::AccountLogin>& login
     // Leave the character once loaded but drop other data referenced by it
     Cleanup<objects::FriendSettings>(cLogin->GetCharacter()
         ->GetFriendSettings().Get());
+    Cleanup<objects::PvPData>(cLogin->GetCharacter()
+        ->GetPvPData().Get());
     Cleanup<objects::Account>(login->GetAccount().Get());
 }
